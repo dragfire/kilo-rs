@@ -16,7 +16,7 @@ impl Default for EditorConfig {
         let mut raw: Termios = Termios::from_fd(fd).unwrap();
         tcgetattr(fd, &mut raw).unwrap();
 
-        let (screencols, screenrows) = get_window_size().unwrap();
+        let (screenrows, screencols) = get_window_size().unwrap();
 
         EditorConfig {
             screenrows,
@@ -117,6 +117,7 @@ fn editor_process_keypress(cfg: &EditorConfig) {
 fn main() {
     let cfg = EditorConfig::default();
     enable_raw_mode(&cfg).unwrap();
+
     loop {
         editor_refresh_screen(&cfg);
         editor_process_keypress(&cfg);
