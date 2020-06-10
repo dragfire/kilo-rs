@@ -34,14 +34,26 @@ fn get_window_size() -> Option<(u16, u16)> {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
+    let mut out = io::stdout();
 
     unsafe {
-        if libc::ioctl(io::stdout().as_raw_fd(), libc::TIOCGWINSZ, &mut winsize) == -1 {
+        if libc::ioctl(out.as_raw_fd(), libc::TIOCGWINSZ, &mut winsize) == -1 {
+            if out.write(b"\x1b[999C\x1b[999B").unwrap() != 12 {
+                return None;
+            }
+            editor_read_key();
             return None;
         }
     }
 
     Some((winsize.ws_row, winsize.ws_col))
+}
+
+fn get_cursor_position() -> Option<(u16, u16)> {
+    let out = io::stdout();
+    let inp = io::stdin();
+
+    None
 }
 
 fn ctrl_key(k: char) -> u8 {
