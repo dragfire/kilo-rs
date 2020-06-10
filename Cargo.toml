@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 termios = "0.3.2"
 libc = "0.2"
+nix = "0.17.0"
