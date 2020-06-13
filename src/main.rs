@@ -1,3 +1,4 @@
+use std::env;
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::process::exit;
@@ -41,8 +42,8 @@ fn get_window_size() -> Option<(u16, u16)> {
             if out.write(b"\x1b[999C\x1b[999B").unwrap() != 12 {
                 return None;
             }
-            editor_read_key();
-            return None;
+
+            return get_cursor_position();
         }
     }
 
@@ -50,10 +51,35 @@ fn get_window_size() -> Option<(u16, u16)> {
 }
 
 fn get_cursor_position() -> Option<(u16, u16)> {
-    let out = io::stdout();
-    let inp = io::stdin();
+    let mut out = io::stdout();
+    let mut inp = io::stdin();
+    if out.write(b"\x1b[6n").unwrap() != 4 {
+        None
+    } else {
+        let mut buf: [u8; 32] = [0; 32];
+        let mut i = 0;
+        let inp = &mut inp;
 
-    None
+        while i < 31 {
+            let mut handle = inp.take(1);
+            let mut b = [0 as u8; 1];
+            if handle.read(&mut b).unwrap() != 1 {
+                break;
+            }
+            buf[i] = b[0];
+            if buf[i] as char == 'R' {
+                break;
+            }
+            i += 1;
+        }
+
+        buf[i] = 0;
+
+        if buf[0] as char != '\x1b' || buf[1] as char != '[' {
+            return None;
+        }
+        Some((0, 0))
+    }
 }
 
 fn ctrl_key(k: char) -> u8 {
@@ -96,21 +122,50 @@ fn term_refresh() {
     out.write(b"\x1b[H").unwrap();
 }
 
-fn editor_draw_rows(cfg: &EditorConfig) {
-    for _ in 0..cfg.screenrows {
-        io::stdout().write(b"~\r\n").unwrap();
+fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
+    for y in 0..cfg.screenrows {
+        if y == cfg.screenrows / 3 {
+            let welcome = format!("Kilo editor -- version {}", env!("CARGO_PKG_VERSION"));
+            let mut welcomelen = welcome.len() as u16;
+            if welcomelen > cfg.screencols {
+                welcomelen = cfg.screencols;
+            }
+            let mut padding = (cfg.screencols - welcomelen) / 2;
+
+            if padding > 0 {
+                abuf.push('~');
+                padding -= 1;
+            }
+
+            while padding > 0 {
+                abuf.push(' ');
+                padding -= 1;
+            }
+            abuf.push_str(&welcome);
+        } else {
+            abuf.push('~');
+        }
+        abuf.push_str("\x1b[K");
+        if y < cfg.screenrows - 1 {
+            abuf.push_str("\r\n");
+        }
     }
 }
 
 fn editor_refresh_screen(cfg: &EditorConfig) {
     let mut out = io::stdout();
     let out = out.by_ref();
-    out.write(b"\x1b[2J").unwrap();
-    out.write(b"\x1b[H").unwrap();
+    let mut abuf = String::new();
+    abuf.push_str("\x1b[?25l");
+    abuf.push_str("\x1b[H");
 
-    editor_draw_rows(cfg);
+    editor_draw_rows(cfg, &mut abuf);
 
-    out.write(b"\x1b[H").unwrap();
+    abuf.push_str("\x1b[H");
+    abuf.push_str("\x1b[?25h");
+
+    out.write(&abuf[..].chars().map(|c| c as u8).collect::<Vec<u8>>())
+        .unwrap();
 }
 
 fn editor_process_keypress(cfg: &EditorConfig) {
