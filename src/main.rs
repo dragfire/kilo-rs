@@ -5,11 +5,19 @@ use std::process::exit;
 use termios::*;
 
 struct EditorConfig {
+    cx: u16,
+    cy: u16,
     screenrows: u16,
     screencols: u16,
     term: Termios,
     fd: RawFd,
 }
+
+const ESCAPE_SEQ: char = '\x1b';
+const ARROW_LEFT: char = 'a';
+const ARROW_RIGHT: char = 'd';
+const ARROW_UP: char = 'w';
+const ARROW_DOWN: char = 's';
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -20,6 +28,8 @@ impl Default for EditorConfig {
         let (screenrows, screencols) = get_window_size().unwrap();
 
         EditorConfig {
+            cx: 0,
+            cy: 0,
             screenrows,
             screencols,
             term: raw,
@@ -112,6 +122,27 @@ fn editor_read_key() -> char {
         None => '\0',
     };
 
+    if c == '\x1b' {
+        let mut seq = [0 as u8; 3];
+        let mut handle = io::stdin().take(1);
+        if handle.read(&mut seq[0..]).unwrap() != 1 {
+            return '\x1b';
+        }
+        if handle.read(&mut seq[1..]).unwrap() != 1 {
+            return '\x1b';
+        }
+
+        if seq[0] as char == '[' {
+            return match seq[1] as char {
+                'A' => ARROW_UP,
+                'B' => ARROW_DOWN,
+                'C' => ARROW_RIGHT,
+                'D' => ARROW_LEFT,
+                _ => ESCAPE_SEQ,
+            };
+        }
+    }
+
     c
 }
 
@@ -146,7 +177,7 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
             abuf.push('~');
         }
         abuf.push_str("\x1b[K");
-        if y < cfg.screenrows - 1 {
+        if y < cfg.screenrows - 10 {
             abuf.push_str("\r\n");
         }
     }
@@ -156,37 +187,71 @@ fn editor_refresh_screen(cfg: &EditorConfig) {
     let mut out = io::stdout();
     let out = out.by_ref();
     let mut abuf = String::new();
+
     abuf.push_str("\x1b[?25l");
     abuf.push_str("\x1b[H");
 
     editor_draw_rows(cfg, &mut abuf);
 
-    abuf.push_str("\x1b[H");
+    let c_pos = format!("\x1b[{};{}H", cfg.cy + 1, cfg.cx + 1);
+    abuf.push_str(&c_pos);
+
     abuf.push_str("\x1b[?25h");
 
     out.write(&abuf[..].chars().map(|c| c as u8).collect::<Vec<u8>>())
         .unwrap();
 }
 
-fn editor_process_keypress(cfg: &EditorConfig) {
+fn editor_process_keypress(cfg: &mut EditorConfig) {
     let c = editor_read_key();
     let ctrl_q = ctrl_key('q');
-    match c as u8 {
-        x if x == ctrl_q => {
+    print!("\r   c: {}", c);
+    match c {
+        x if x as u8 == ctrl_q => {
             term_refresh();
             disable_raw_mode(&cfg.term).unwrap();
             exit(0);
+        }
+        ARROW_LEFT | ARROW_RIGHT | ARROW_UP | ARROW_DOWN => {
+            editor_move_cursor(cfg, c);
+        }
+        _ => (),
+    }
+}
+
+fn editor_move_cursor(cfg: &mut EditorConfig, key: char) {
+    print!("{}", key);
+    match key {
+        ARROW_LEFT => {
+            if cfg.cx != 0 {
+                cfg.cx -= 1;
+            }
+        }
+        ARROW_RIGHT => {
+            if cfg.cx != cfg.screencols - 1 {
+                cfg.cx += 1;
+            }
+        }
+        ARROW_UP => {
+            if cfg.cy != 0 {
+                cfg.cy -= 1;
+            }
+        }
+        ARROW_DOWN => {
+            if cfg.cy != cfg.screenrows - 1 {
+                cfg.cy += 1;
+            }
         }
         _ => (),
     }
 }
 
 fn main() {
-    let cfg = EditorConfig::default();
+    let mut cfg = EditorConfig::default();
     enable_raw_mode(&cfg).unwrap();
 
     loop {
         editor_refresh_screen(&cfg);
-        editor_process_keypress(&cfg);
+        editor_process_keypress(&mut cfg);
     }
 }
