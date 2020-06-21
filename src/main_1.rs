@@ -121,22 +121,22 @@ fn editor_read_key() -> char {
         c = byte.unwrap() as char;
     }
 
-    if c == '\x1b' {
-        let mut seq = [0 as u8; 3];
-        let mut handle = io::stdin().take(2);
-        if handle.read(&mut seq).unwrap() != 1 {
-            return '\x1b';
-        }
-        if seq[0] as char == '[' {
-            return match seq[1] as char {
-                'A' => ARROW_UP,
-                'B' => ARROW_DOWN,
-                'C' => ARROW_RIGHT,
-                'D' => ARROW_LEFT,
-                _ => ESCAPE_SEQ,
-            };
-        }
-    }
+    // if c == '\x1b' {
+    //     let mut seq = [0 as u8; 3];
+    //     let mut handle = io::stdin().take(2);
+    //     if handle.read(&mut seq).unwrap() != 1 {
+    //         return '\x1b';
+    //     }
+    //     if seq[0] as char == '[' {
+    //         return match seq[1] as char {
+    //             'A' => ARROW_UP,
+    //             'B' => ARROW_DOWN,
+    //             'C' => ARROW_RIGHT,
+    //             'D' => ARROW_LEFT,
+    //             _ => ESCAPE_SEQ,
+    //         };
+    //     }
+    // }
 
     c
 }
@@ -195,6 +195,7 @@ fn editor_refresh_screen(cfg: &EditorConfig) {
     //abuf.push_str("\x1b[?25h");
 
     abuf.push_str("\x1b[?25l");
+    abuf.push_str("\x1b[2J");
     abuf.push_str("\x1b[H");
     editor_draw_rows(cfg, &mut abuf);
     abuf.push_str("\x1b[H");
