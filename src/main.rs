@@ -13,11 +13,38 @@ struct EditorConfig {
     fd: RawFd,
 }
 
-const ESCAPE_SEQ: char = '\x1b';
-const ARROW_LEFT: char = 'a';
-const ARROW_RIGHT: char = 'd';
-const ARROW_UP: char = 'w';
-const ARROW_DOWN: char = 's';
+enum EditorKey {
+    ArrowLeft = 1000,
+    ArrowRight,
+    ArrowUp,
+    ArrowDown,
+    EscapeSeq = 0x1b,
+}
+
+impl From<EditorKey> for usize {
+    fn from(key: EditorKey) -> Self {
+        match key {
+            EditorKey::ArrowLeft => 1000,
+            EditorKey::ArrowRight => 1001,
+            EditorKey::ArrowUp => 1002,
+            EditorKey::ArrowDown => 1003,
+            EditorKey::EscapeSeq => 0x1b,
+        }
+    }
+}
+
+impl From<usize> for EditorKey {
+    fn from(key: usize) -> Self {
+        match key {
+            1000 => EditorKey::ArrowLeft,
+            1001 => EditorKey::ArrowRight,
+            1002 => EditorKey::ArrowUp,
+            1003 => EditorKey::ArrowDown,
+            0x1b => EditorKey::EscapeSeq,
+            _ => EditorKey::EscapeSeq,
+        }
+    }
+}
 
 // TODO Implement `Result`, remove `unwrap`.
 
@@ -94,8 +121,8 @@ fn get_cursor_position() -> Option<(u16, u16)> {
     }
 }
 
-fn ctrl_key(k: char) -> u8 {
-    k as u8 & 0x1f
+fn ctrl_key(k: char) -> usize {
+    (k as u8 & 0x1f) as usize
 }
 
 fn enable_raw_mode(cfg: &EditorConfig) -> Result<(), io::Error> {
@@ -113,10 +140,14 @@ fn enable_raw_mode(cfg: &EditorConfig) -> Result<(), io::Error> {
 fn disable_raw_mode(raw: &Termios) -> Result<(), io::Error> {
     let mut raw = raw;
     tcsetattr(io::stdin().as_raw_fd(), TCSAFLUSH, &mut raw)?;
+
     Ok(())
 }
 
-fn editor_read_key() -> char {
+/// Read a key and wait for the next one.
+///
+/// It also handles keys with Escape sequences.
+fn editor_read_key() -> usize {
     let mut inp = io::stdin();
     let mut c = [0];
     loop {
@@ -127,23 +158,26 @@ fn editor_read_key() -> char {
             }
         } else {
             term_refresh();
+            exit(1);
         }
     }
-    let c = c[0] as char;
 
-    if c == ESCAPE_SEQ {
+    let c = c[0] as usize;
+    let esc_seq = EditorKey::EscapeSeq.into();
+
+    if c == esc_seq {
         let mut seq = [0 as u8; 3];
         let mut handle = io::stdin().take(2);
         if handle.read(&mut seq).unwrap() != 2 {
-            return ESCAPE_SEQ;
+            return esc_seq;
         }
         if seq[0] as char == '[' {
             return match seq[1] as char {
-                'A' => ARROW_UP,
-                'B' => ARROW_DOWN,
-                'C' => ARROW_RIGHT,
-                'D' => ARROW_LEFT,
-                _ => ESCAPE_SEQ,
+                'A' => EditorKey::ArrowUp.into(),
+                'B' => EditorKey::ArrowDown.into(),
+                'C' => EditorKey::ArrowRight.into(),
+                'D' => EditorKey::ArrowLeft.into(),
+                _ => esc_seq,
             };
         }
     }
@@ -210,36 +244,36 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
     let ctrl_q = ctrl_key('q');
 
     match c {
-        x if x as u8 == ctrl_q => {
+        x if x == ctrl_q => {
             term_refresh();
             disable_raw_mode(&cfg.term).unwrap();
             exit(0);
         }
-        ARROW_LEFT | ARROW_RIGHT | ARROW_UP | ARROW_DOWN => {
-            editor_move_cursor(cfg, c);
+        1000..=1003 => {
+            editor_move_cursor(cfg, c.into());
         }
         _ => (),
     }
 }
 
-fn editor_move_cursor(cfg: &mut EditorConfig, key: char) {
+fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
     match key {
-        ARROW_LEFT => {
+        EditorKey::ArrowLeft => {
             if cfg.cx != 0 {
                 cfg.cx -= 1;
             }
         }
-        ARROW_RIGHT => {
+        EditorKey::ArrowRight => {
             if cfg.cx != cfg.screencols - 1 {
                 cfg.cx += 1;
             }
         }
-        ARROW_UP => {
+        EditorKey::ArrowUp => {
             if cfg.cy != 0 {
                 cfg.cy -= 1;
             }
         }
-        ARROW_DOWN => {
+        EditorKey::ArrowDown => {
             if cfg.cy != cfg.screenrows - 1 {
                 cfg.cy += 1;
             }
