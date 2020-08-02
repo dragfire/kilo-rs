@@ -19,6 +19,8 @@ const ARROW_RIGHT: char = 'd';
 const ARROW_UP: char = 'w';
 const ARROW_DOWN: char = 's';
 
+// TODO Implement `Result`, remove `unwrap`.
+
 impl Default for EditorConfig {
     fn default() -> Self {
         let fd = io::stdin().as_raw_fd();
@@ -223,25 +225,21 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
 fn editor_move_cursor(cfg: &mut EditorConfig, key: char) {
     match key {
         ARROW_LEFT => {
-            print!("LEFT\r\n");
             if cfg.cx != 0 {
                 cfg.cx -= 1;
             }
         }
         ARROW_RIGHT => {
-            print!("RIGHT\r\n");
             if cfg.cx != cfg.screencols - 1 {
                 cfg.cx += 1;
             }
         }
         ARROW_UP => {
-            print!("UP\r\n");
             if cfg.cy != 0 {
                 cfg.cy -= 1;
             }
         }
         ARROW_DOWN => {
-            print!("DOWN\r\n");
             if cfg.cy != cfg.screenrows - 1 {
                 cfg.cy += 1;
             }
@@ -257,6 +255,5 @@ fn main() {
     loop {
         editor_refresh_screen(&cfg);
         editor_process_keypress(&mut cfg);
-        print!("Hel\r\n");
     }
 }
