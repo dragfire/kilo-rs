@@ -10,6 +10,7 @@ struct EditorConfig {
     screenrows: usize,
     screencols: usize,
     rowoff: usize,
+    coloff: usize,
     numrows: usize,
     rows: Vec<String>,
     term: Termios,
@@ -69,6 +70,7 @@ impl Default for EditorConfig {
             fd,
             term,
             rowoff: 0,
+            coloff: 0,
             rows: Vec::new(),
             numrows: 0,
             screenrows,
@@ -217,6 +219,12 @@ fn editor_scroll(cfg: &mut EditorConfig) {
     if cfg.cy >= cfg.rowoff + cfg.screenrows {
         cfg.rowoff = cfg.cy - cfg.screenrows + 1;
     }
+    if cfg.cx < cfg.coloff {
+        cfg.coloff = cfg.cx;
+    }
+    if cfg.cx >= cfg.coloff + cfg.screencols {
+        cfg.coloff = cfg.cx - cfg.screencols + 1;
+    }
 }
 
 fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
@@ -246,13 +254,21 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
             }
         } else {
             let rows = &cfg.rows;
-            let mut len = rows[filerow].len();
+
+            // since I am using usize, need to avoid overflow error
+            // when length of a row is less than coloff.
+            let mut len = rows[filerow].len().saturating_sub(cfg.coloff);
             if len > cfg.screencols {
                 len = cfg.screencols;
             }
 
-            let slice = rows[filerow].as_str();
-            abuf.push_str(&slice[..len]);
+            let mut slice = rows[filerow].as_str();
+            if cfg.coloff < cfg.coloff + len {
+                slice = &slice[cfg.coloff..cfg.coloff + len];
+            } else {
+                slice = "";
+            }
+            abuf.push_str(slice);
         }
 
         abuf.push_str("\x1b[K");
@@ -273,7 +289,11 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
 
     editor_draw_rows(cfg, &mut abuf);
 
-    abuf.push_str(&format!("\x1b[{};{}H", cfg.cy - cfg.rowoff + 1, cfg.cx + 1));
+    abuf.push_str(&format!(
+        "\x1b[{};{}H",
+        (cfg.cy - cfg.rowoff) + 1,
+        (cfg.cx - cfg.coloff) + 1
+    ));
     abuf.push_str("\x1b[?25h");
 
     out.write(abuf.as_bytes()).unwrap();
@@ -298,6 +318,10 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
 }
 
 fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
+    let mut row = None;
+    if cfg.cy < cfg.numrows {
+        row = Some(&cfg.rows[cfg.cy]);
+    }
     match key {
         EditorKey::ArrowLeft => {
             if cfg.cx != 0 {
@@ -305,7 +329,7 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
             }
         }
         EditorKey::ArrowRight => {
-            if cfg.cx != cfg.screencols - 1 {
+            if row.is_some() && cfg.cx < row.unwrap().len() {
                 cfg.cx += 1;
             }
         }
@@ -321,6 +345,14 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
         }
         EditorKey::DeleteKey => unimplemented!("DeleteKey"),
         _ => (),
+    }
+    if cfg.cy < cfg.numrows {
+        row = Some(&cfg.rows[cfg.cy]);
+    }
+
+    let rowlen = if row.is_some() { row.unwrap().len() } else { 0 };
+    if cfg.cx > rowlen {
+        cfg.cx = rowlen;
     }
 }
 
