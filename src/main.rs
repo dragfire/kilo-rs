@@ -18,6 +18,8 @@ enum EditorKey {
     ArrowRight,
     ArrowUp,
     ArrowDown,
+    DeleteKey,
+    // TODO Add Keys: PageUp, PageDown, HomeKey, EndKey
     EscapeSeq = 0x1b,
 }
 
@@ -28,6 +30,7 @@ impl From<EditorKey> for usize {
             EditorKey::ArrowRight => 1001,
             EditorKey::ArrowUp => 1002,
             EditorKey::ArrowDown => 1003,
+            EditorKey::DeleteKey => 1004,
             EditorKey::EscapeSeq => 0x1b,
         }
     }
@@ -40,6 +43,7 @@ impl From<usize> for EditorKey {
             1001 => EditorKey::ArrowRight,
             1002 => EditorKey::ArrowUp,
             1003 => EditorKey::ArrowDown,
+            1004 => EditorKey::DeleteKey,
             0x1b => EditorKey::EscapeSeq,
             _ => EditorKey::EscapeSeq,
         }
@@ -167,18 +171,26 @@ fn editor_read_key() -> usize {
 
     if c == esc_seq {
         let mut seq = [0 as u8; 3];
-        let mut handle = io::stdin().take(2);
-        if handle.read(&mut seq).unwrap() != 2 {
-            return esc_seq;
-        }
+        let mut handle = io::stdin().take(3);
+        handle.read(&mut seq).unwrap();
         if seq[0] as char == '[' {
-            return match seq[1] as char {
-                'A' => EditorKey::ArrowUp.into(),
-                'B' => EditorKey::ArrowDown.into(),
-                'C' => EditorKey::ArrowRight.into(),
-                'D' => EditorKey::ArrowLeft.into(),
-                _ => esc_seq,
-            };
+            let seq1_char = seq[1] as char;
+            if seq[1] >= '0' as u8 && seq[1] <= '9' as u8 {
+                if seq[2] as char == '~' {
+                    return match seq1_char {
+                        '3' => EditorKey::DeleteKey.into(),
+                        _ => esc_seq,
+                    };
+                }
+            } else {
+                return match seq1_char {
+                    'A' => EditorKey::ArrowUp.into(),
+                    'B' => EditorKey::ArrowDown.into(),
+                    'C' => EditorKey::ArrowRight.into(),
+                    'D' => EditorKey::ArrowLeft.into(),
+                    _ => esc_seq,
+                };
+            }
         }
     }
 
@@ -249,7 +261,7 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
             disable_raw_mode(&cfg.term).unwrap();
             exit(0);
         }
-        1000..=1003 => {
+        1000..=1004 => {
             editor_move_cursor(cfg, c.into());
         }
         _ => (),
@@ -278,6 +290,7 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
                 cfg.cy += 1;
             }
         }
+        EditorKey::DeleteKey => unimplemented!("DeleteKey"),
         _ => (),
     }
 }
@@ -287,7 +300,7 @@ fn main() {
     enable_raw_mode(&cfg).unwrap();
 
     loop {
-        editor_refresh_screen(&cfg);
+        // editor_refresh_screen(&cfg);
         editor_process_keypress(&mut cfg);
     }
 }
