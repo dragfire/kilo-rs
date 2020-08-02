@@ -116,16 +116,24 @@ fn disable_raw_mode(raw: &Termios) -> Result<(), io::Error> {
 
 fn editor_read_key() -> char {
     let mut inp = io::stdin();
-    let mut c: char = ' ';
-    while let Some(byte) = inp.by_ref().bytes().next() {
-        c = byte.unwrap() as char;
+    let mut c = [0];
+    loop {
+        let read_result = inp.read(&mut c);
+        if let Ok(n) = read_result {
+            if n > 0 {
+                break;
+            }
+        } else {
+            term_refresh();
+        }
     }
+    let c = c[0] as char;
 
-    if c == '\x1b' {
+    if c == ESCAPE_SEQ {
         let mut seq = [0 as u8; 3];
         let mut handle = io::stdin().take(2);
-        if handle.read(&mut seq).unwrap() != 1 {
-            return '\x1b';
+        if handle.read(&mut seq).unwrap() != 2 {
+            return ESCAPE_SEQ;
         }
         if seq[0] as char == '[' {
             return match seq[1] as char {
@@ -181,27 +189,18 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
 
 fn editor_refresh_screen(cfg: &EditorConfig) {
     let mut out = io::stdout();
-    let out = out.by_ref();
     let mut abuf = String::new();
-
-    //abuf.push_str("\x1b[?25l");
-    //abuf.push_str("\x1b[H");
-
-    //editor_draw_rows(cfg, &mut abuf);
-
-    //let c_pos = format!("\x1b[{};{}H", cfg.cy + 1, cfg.cx + 1);
-    //abuf.push_str(&c_pos);
-
-    //abuf.push_str("\x1b[?25h");
 
     abuf.push_str("\x1b[?25l");
     abuf.push_str("\x1b[H");
+
     editor_draw_rows(cfg, &mut abuf);
-    abuf.push_str("\x1b[H");
+
+    abuf.push_str(&format!("\x1b[{};{}H", cfg.cy + 1, cfg.cx + 1));
     abuf.push_str("\x1b[?25h");
 
-    out.write(&abuf.chars().map(|c| c as u8).collect::<Vec<u8>>())
-        .unwrap();
+    out.write(abuf.as_bytes()).unwrap();
+    out.flush().unwrap();
 }
 
 fn editor_process_keypress(cfg: &mut EditorConfig) {
@@ -224,21 +223,25 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
 fn editor_move_cursor(cfg: &mut EditorConfig, key: char) {
     match key {
         ARROW_LEFT => {
+            print!("LEFT\r\n");
             if cfg.cx != 0 {
                 cfg.cx -= 1;
             }
         }
         ARROW_RIGHT => {
+            print!("RIGHT\r\n");
             if cfg.cx != cfg.screencols - 1 {
                 cfg.cx += 1;
             }
         }
         ARROW_UP => {
+            print!("UP\r\n");
             if cfg.cy != 0 {
                 cfg.cy -= 1;
             }
         }
         ARROW_DOWN => {
+            print!("DOWN\r\n");
             if cfg.cy != cfg.screenrows - 1 {
                 cfg.cy += 1;
             }
@@ -254,5 +257,6 @@ fn main() {
     loop {
         editor_refresh_screen(&cfg);
         editor_process_keypress(&mut cfg);
+        print!("Hel\r\n");
     }
 }
