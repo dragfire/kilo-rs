@@ -1,5 +1,5 @@
 use std::env;
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::process::exit;
 use termios::*;
@@ -9,8 +9,9 @@ struct EditorConfig {
     cy: usize,
     screenrows: usize,
     screencols: usize,
+    rowoff: usize,
     numrows: usize,
-    row: String,
+    rows: Vec<String>,
     term: Termios,
     fd: RawFd,
 }
@@ -65,12 +66,13 @@ impl Default for EditorConfig {
         EditorConfig {
             cx: 0,
             cy: 0,
+            fd,
+            term,
+            rowoff: 0,
+            rows: Vec::new(),
+            numrows: 0,
             screenrows,
             screencols,
-            numrows: 0,
-            row: String::new(),
-            term,
-            fd,
         }
     }
 }
@@ -208,9 +210,19 @@ fn term_refresh() {
     out.write(b"\x1b[H").unwrap();
 }
 
+fn editor_scroll(cfg: &mut EditorConfig) {
+    if cfg.cy < cfg.rowoff {
+        cfg.rowoff = cfg.cy;
+    }
+    if cfg.cy >= cfg.rowoff + cfg.screenrows {
+        cfg.rowoff = cfg.cy - cfg.screenrows + 1;
+    }
+}
+
 fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
     for y in 0..cfg.screenrows {
-        if y >= cfg.numrows {
+        let filerow = y + cfg.rowoff;
+        if filerow >= cfg.numrows {
             if cfg.numrows == 0 && y == cfg.screenrows / 3 {
                 let welcome = format!("Kilo editor -- version {}", env!("CARGO_PKG_VERSION"));
                 let mut welcomelen = welcome.len();
@@ -233,12 +245,13 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
                 abuf.push('~');
             }
         } else {
-            let mut len = cfg.row.len();
+            let rows = &cfg.rows;
+            let mut len = rows[filerow].len();
             if len > cfg.screencols {
                 len = cfg.screencols;
             }
 
-            let slice = cfg.row.as_str();
+            let slice = rows[filerow].as_str();
             abuf.push_str(&slice[..len]);
         }
 
@@ -249,7 +262,9 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
     }
 }
 
-fn editor_refresh_screen(cfg: &EditorConfig) {
+fn editor_refresh_screen(cfg: &mut EditorConfig) {
+    editor_scroll(cfg);
+
     let mut out = io::stdout();
     let mut abuf = String::new();
 
@@ -258,7 +273,7 @@ fn editor_refresh_screen(cfg: &EditorConfig) {
 
     editor_draw_rows(cfg, &mut abuf);
 
-    abuf.push_str(&format!("\x1b[{};{}H", cfg.cy + 1, cfg.cx + 1));
+    abuf.push_str(&format!("\x1b[{};{}H", cfg.cy - cfg.rowoff + 1, cfg.cx + 1));
     abuf.push_str("\x1b[?25h");
 
     out.write(abuf.as_bytes()).unwrap();
@@ -300,7 +315,7 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
             }
         }
         EditorKey::ArrowDown => {
-            if cfg.cy != cfg.screenrows - 1 {
+            if cfg.cy < cfg.numrows {
                 cfg.cy += 1;
             }
         }
@@ -310,11 +325,13 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
 }
 
 fn editor_open(cfg: &mut EditorConfig, filename: &str) {
-    let mut file = std::fs::File::open(filename).unwrap();
-    let mut line = String::new();
-    file.read_to_string(&mut line).unwrap();
-    cfg.row = line.trim_end().to_string();
-    cfg.numrows = 1;
+    let file = std::fs::File::open(filename).unwrap();
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line.unwrap();
+        cfg.rows.push(line);
+    }
+    cfg.numrows = cfg.rows.len();
 }
 
 fn main() {
@@ -328,7 +345,7 @@ fn main() {
     }
 
     loop {
-        editor_refresh_screen(&cfg);
+        editor_refresh_screen(&mut cfg);
         editor_process_keypress(&mut cfg);
     }
 }
