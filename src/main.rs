@@ -300,7 +300,7 @@ fn main() {
     enable_raw_mode(&cfg).unwrap();
 
     loop {
-        // editor_refresh_screen(&cfg);
+        editor_refresh_screen(&cfg);
         editor_process_keypress(&mut cfg);
     }
 }
