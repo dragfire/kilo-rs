@@ -5,10 +5,12 @@ use std::process::exit;
 use termios::*;
 
 struct EditorConfig {
-    cx: u16,
-    cy: u16,
-    screenrows: u16,
-    screencols: u16,
+    cx: usize,
+    cy: usize,
+    screenrows: usize,
+    screencols: usize,
+    numrows: usize,
+    row: String,
     term: Termios,
     fd: RawFd,
 }
@@ -65,13 +67,15 @@ impl Default for EditorConfig {
             cy: 0,
             screenrows,
             screencols,
+            numrows: 0,
+            row: String::new(),
             term,
             fd,
         }
     }
 }
 
-fn get_window_size() -> Option<(u16, u16)> {
+fn get_window_size() -> Option<(usize, usize)> {
     let mut winsize = libc::winsize {
         ws_row: 0,
         ws_col: 0,
@@ -90,10 +94,10 @@ fn get_window_size() -> Option<(u16, u16)> {
         }
     }
 
-    Some((winsize.ws_row, winsize.ws_col))
+    Some((winsize.ws_row as usize, winsize.ws_col as usize))
 }
 
-fn get_cursor_position() -> Option<(u16, u16)> {
+fn get_cursor_position() -> Option<(usize, usize)> {
     let mut out = io::stdout();
     let mut inp = io::stdin();
     if out.write(b"\x1b[6n").unwrap() != 4 {
@@ -206,26 +210,36 @@ fn term_refresh() {
 
 fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
     for y in 0..cfg.screenrows {
-        if y == cfg.screenrows / 3 {
-            let welcome = format!("Kilo editor -- version {}", env!("CARGO_PKG_VERSION"));
-            let mut welcomelen = welcome.len() as u16;
-            if welcomelen > cfg.screencols {
-                welcomelen = cfg.screencols;
-            }
-            let mut padding = (cfg.screencols - welcomelen) / 2;
+        if y >= cfg.numrows {
+            if cfg.numrows == 0 && y == cfg.screenrows / 3 {
+                let welcome = format!("Kilo editor -- version {}", env!("CARGO_PKG_VERSION"));
+                let mut welcomelen = welcome.len();
+                if welcomelen > cfg.screencols {
+                    welcomelen = cfg.screencols;
+                }
+                let mut padding = (cfg.screencols - welcomelen) / 2;
 
-            if padding > 0 {
+                if padding > 0 {
+                    abuf.push('~');
+                    padding -= 1;
+                }
+
+                while padding > 0 {
+                    abuf.push(' ');
+                    padding -= 1;
+                }
+                abuf.push_str(&welcome);
+            } else {
                 abuf.push('~');
-                padding -= 1;
+            }
+        } else {
+            let mut len = cfg.row.len();
+            if len > cfg.screencols {
+                len = cfg.screencols;
             }
 
-            while padding > 0 {
-                abuf.push(' ');
-                padding -= 1;
-            }
-            abuf.push_str(&welcome);
-        } else {
-            abuf.push('~');
+            let slice = cfg.row.as_str();
+            abuf.push_str(&slice[..len]);
         }
 
         abuf.push_str("\x1b[K");
@@ -295,9 +309,23 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
     }
 }
 
+fn editor_open(cfg: &mut EditorConfig, filename: &str) {
+    let mut file = std::fs::File::open(filename).unwrap();
+    let mut line = String::new();
+    file.read_to_string(&mut line).unwrap();
+    cfg.row = line.trim_end().to_string();
+    cfg.numrows = 1;
+}
+
 fn main() {
+    let args = std::env::args().collect::<Vec<String>>();
     let mut cfg = EditorConfig::default();
     enable_raw_mode(&cfg).unwrap();
+
+    if args.len() > 1 {
+        let filename = &args[1];
+        editor_open(&mut cfg, filename);
+    }
 
     loop {
         editor_refresh_screen(&cfg);
