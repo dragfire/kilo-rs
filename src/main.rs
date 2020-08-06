@@ -4,6 +4,14 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::process::exit;
 use termios::*;
 
+const KILO_TAB_STOP: usize = 8;
+
+#[derive(Default)]
+struct Row {
+    chars: String,
+    render: String,
+}
+
 struct EditorConfig {
     cx: usize,
     cy: usize,
@@ -12,7 +20,7 @@ struct EditorConfig {
     rowoff: usize,
     coloff: usize,
     numrows: usize,
-    rows: Vec<String>,
+    rows: Vec<Row>,
     term: Termios,
     fd: RawFd,
 }
@@ -257,12 +265,12 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
 
             // since I am using usize, need to avoid overflow error
             // when length of a row is less than coloff.
-            let mut len = rows[filerow].len().saturating_sub(cfg.coloff);
+            let mut len = rows[filerow].render.len().saturating_sub(cfg.coloff);
             if len > cfg.screencols {
                 len = cfg.screencols;
             }
 
-            let mut slice = rows[filerow].as_str();
+            let mut slice = rows[filerow].render.as_str();
             if cfg.coloff < cfg.coloff + len {
                 slice = &slice[cfg.coloff..cfg.coloff + len];
             } else {
@@ -318,19 +326,25 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
 }
 
 fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
-    let mut row = None;
+    let mut row = &Row::default();
     if cfg.cy < cfg.numrows {
-        row = Some(&cfg.rows[cfg.cy]);
+        row = &cfg.rows[cfg.cy];
     }
     match key {
         EditorKey::ArrowLeft => {
             if cfg.cx != 0 {
                 cfg.cx -= 1;
+            } else if cfg.cy > 0 {
+                cfg.cy -= 1;
+                cfg.cx = cfg.rows[cfg.cy].chars.len();
             }
         }
         EditorKey::ArrowRight => {
-            if row.is_some() && cfg.cx < row.unwrap().len() {
+            if cfg.cx < row.chars.len() {
                 cfg.cx += 1;
+            } else if cfg.cx == row.chars.len() {
+                cfg.cy += 1;
+                cfg.cx = 0;
             }
         }
         EditorKey::ArrowUp => {
@@ -347,10 +361,10 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
         _ => (),
     }
     if cfg.cy < cfg.numrows {
-        row = Some(&cfg.rows[cfg.cy]);
+        row = &cfg.rows[cfg.cy];
     }
 
-    let rowlen = if row.is_some() { row.unwrap().len() } else { 0 };
+    let rowlen = row.chars.len();
     if cfg.cx > rowlen {
         cfg.cx = rowlen;
     }
@@ -361,9 +375,29 @@ fn editor_open(cfg: &mut EditorConfig, filename: &str) {
     let reader = BufReader::new(file);
     for line in reader.lines() {
         let line = line.unwrap();
-        cfg.rows.push(line);
+        let mut row = Row::default();
+        row.chars = line.to_string();
+        row.render = line;
+        editor_update_row(&mut row);
+        cfg.rows.push(row);
     }
     cfg.numrows = cfg.rows.len();
+}
+
+fn editor_update_row(row: &mut Row) {
+    let mut idx = 0;
+
+    for c in row.chars.chars() {
+        if c == '\t' {
+            row.render.push(' ');
+            idx += 1;
+
+            while idx % KILO_TAB_STOP != 0 {
+                row.render.push(' ');
+                idx += 1;
+            }
+        }
+    }
 }
 
 fn main() {
