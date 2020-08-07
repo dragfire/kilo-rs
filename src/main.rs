@@ -15,6 +15,7 @@ struct Row {
 struct EditorConfig {
     cx: usize,
     cy: usize,
+    rx: usize,
     screenrows: usize,
     screencols: usize,
     rowoff: usize,
@@ -25,13 +26,17 @@ struct EditorConfig {
     fd: RawFd,
 }
 
+#[derive(Eq, PartialEq)]
 enum EditorKey {
     ArrowLeft = 1000,
     ArrowRight,
     ArrowUp,
     ArrowDown,
     DeleteKey,
-    // TODO Add Keys: PageUp, PageDown, HomeKey, EndKey
+    PageUp,
+    PageDown,
+    HomeKey,
+    EndKey,
     EscapeSeq = 0x1b,
 }
 
@@ -43,6 +48,10 @@ impl From<EditorKey> for usize {
             EditorKey::ArrowUp => 1002,
             EditorKey::ArrowDown => 1003,
             EditorKey::DeleteKey => 1004,
+            EditorKey::PageUp => 1005,
+            EditorKey::PageDown => 1006,
+            EditorKey::HomeKey => 1007,
+            EditorKey::EndKey => 1008,
             EditorKey::EscapeSeq => 0x1b,
         }
     }
@@ -56,6 +65,10 @@ impl From<usize> for EditorKey {
             1002 => EditorKey::ArrowUp,
             1003 => EditorKey::ArrowDown,
             1004 => EditorKey::DeleteKey,
+            1005 => EditorKey::PageUp,
+            1006 => EditorKey::PageDown,
+            1007 => EditorKey::HomeKey,
+            1008 => EditorKey::EndKey,
             0x1b => EditorKey::EscapeSeq,
             _ => EditorKey::EscapeSeq,
         }
@@ -75,6 +88,7 @@ impl Default for EditorConfig {
         EditorConfig {
             cx: 0,
             cy: 0,
+            rx: 0,
             fd,
             term,
             rowoff: 0,
@@ -189,12 +203,19 @@ fn editor_read_key() -> usize {
         let mut seq = [0 as u8; 3];
         let mut handle = io::stdin().take(3);
         handle.read(&mut seq).unwrap();
-        if seq[0] as char == '[' {
-            let seq1_char = seq[1] as char;
+        let seq0_char = seq[0] as char;
+        let seq1_char = seq[1] as char;
+        if seq0_char == '[' {
             if seq[1] >= '0' as u8 && seq[1] <= '9' as u8 {
                 if seq[2] as char == '~' {
                     return match seq1_char {
+                        '1' => EditorKey::HomeKey.into(),
                         '3' => EditorKey::DeleteKey.into(),
+                        '4' => EditorKey::EndKey.into(),
+                        '5' => EditorKey::PageUp.into(),
+                        '6' => EditorKey::PageDown.into(),
+                        '7' => EditorKey::HomeKey.into(),
+                        '8' => EditorKey::EndKey.into(),
                         _ => esc_seq,
                     };
                 }
@@ -206,6 +227,14 @@ fn editor_read_key() -> usize {
                     'D' => EditorKey::ArrowLeft.into(),
                     _ => esc_seq,
                 };
+            }
+        } else if seq0_char == '0' {
+            if seq1_char == 'H' {
+                return EditorKey::HomeKey.into();
+            } else if seq1_char == 'F' {
+                return EditorKey::EndKey.into();
+            } else {
+                return esc_seq;
             }
         }
     }
@@ -221,17 +250,22 @@ fn term_refresh() {
 }
 
 fn editor_scroll(cfg: &mut EditorConfig) {
+    cfg.rx = 0;
+    if cfg.cy < cfg.numrows {
+        cfg.rx = editor_row_cx_to_rx(&cfg.rows[cfg.cy], cfg.cx);
+    }
+
     if cfg.cy < cfg.rowoff {
         cfg.rowoff = cfg.cy;
     }
     if cfg.cy >= cfg.rowoff + cfg.screenrows {
         cfg.rowoff = cfg.cy - cfg.screenrows + 1;
     }
-    if cfg.cx < cfg.coloff {
-        cfg.coloff = cfg.cx;
+    if cfg.rx < cfg.coloff {
+        cfg.coloff = cfg.rx;
     }
-    if cfg.cx >= cfg.coloff + cfg.screencols {
-        cfg.coloff = cfg.cx - cfg.screencols + 1;
+    if cfg.rx >= cfg.coloff + cfg.screencols {
+        cfg.coloff = cfg.rx - cfg.screencols + 1;
     }
 }
 
@@ -300,7 +334,7 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
     abuf.push_str(&format!(
         "\x1b[{};{}H",
         (cfg.cy - cfg.rowoff) + 1,
-        (cfg.cx - cfg.coloff) + 1
+        (cfg.rx - cfg.coloff) + 1
     ));
     abuf.push_str("\x1b[?25h");
 
@@ -320,6 +354,33 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
         }
         1000..=1004 => {
             editor_move_cursor(cfg, c.into());
+        }
+        1005 | 1006 => {
+            let key: EditorKey = c.into();
+            if key == EditorKey::PageUp {
+                cfg.cy = cfg.rowoff;
+            } else if key == EditorKey::PageDown {
+                cfg.cy = cfg.rowoff + cfg.screenrows - 1;
+                if cfg.cy > cfg.numrows {
+                    cfg.cy = cfg.numrows;
+                }
+            }
+
+            for _ in 0..cfg.screenrows {
+                let key = if key == EditorKey::PageUp {
+                    EditorKey::ArrowUp
+                } else {
+                    EditorKey::ArrowDown
+                };
+
+                editor_move_cursor(cfg, key);
+            }
+        }
+        1007 => {
+            cfg.cx = 0;
+        }
+        1008 => {
+            cfg.cx = cfg.screencols - 1;
         }
         _ => (),
     }
@@ -370,6 +431,19 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
     }
 }
 
+fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
+    let mut rx = 0;
+    let slice = &row.chars[..cx];
+    for c in slice.chars() {
+        if c == '\t' {
+            rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+        }
+        rx += 1;
+    }
+
+    rx
+}
+
 fn editor_open(cfg: &mut EditorConfig, filename: &str) {
     let file = std::fs::File::open(filename).unwrap();
     let reader = BufReader::new(file);
@@ -381,6 +455,7 @@ fn editor_open(cfg: &mut EditorConfig, filename: &str) {
         editor_update_row(&mut row);
         cfg.rows.push(row);
     }
+
     cfg.numrows = cfg.rows.len();
 }
 
