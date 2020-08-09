@@ -24,6 +24,7 @@ struct EditorConfig {
     rows: Vec<Row>,
     term: Termios,
     fd: RawFd,
+    filename: String,
 }
 
 #[derive(Eq, PartialEq)]
@@ -83,7 +84,8 @@ impl Default for EditorConfig {
         let mut term: Termios = Termios::from_fd(fd).unwrap();
         tcgetattr(fd, &mut term).unwrap();
 
-        let (screenrows, screencols) = get_window_size().unwrap();
+        let (mut screenrows, screencols) = get_window_size().unwrap();
+        screenrows -= 1;
 
         EditorConfig {
             cx: 0,
@@ -97,6 +99,7 @@ impl Default for EditorConfig {
             numrows: 0,
             screenrows,
             screencols,
+            filename: String::new(),
         }
     }
 }
@@ -314,10 +317,18 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
         }
 
         abuf.push_str("\x1b[K");
-        if y < cfg.screenrows - 1 {
-            abuf.push_str("\r\n");
-        }
+        abuf.push_str("\r\n");
     }
+}
+
+fn editor_draw_status_bar(cfg: &EditorConfig, abuf: &mut String) {
+    abuf.push_str("\x1b[7m");
+    let status = String::new();
+
+    for _ in 0..cfg.screencols {
+        abuf.push_str(" ");
+    }
+    abuf.push_str("\x1b[m");
 }
 
 fn editor_refresh_screen(cfg: &mut EditorConfig) {
@@ -330,6 +341,7 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
     abuf.push_str("\x1b[H");
 
     editor_draw_rows(cfg, &mut abuf);
+    editor_draw_status_bar(cfg, &mut abuf);
 
     abuf.push_str(&format!(
         "\x1b[{};{}H",
@@ -380,7 +392,9 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
             cfg.cx = 0;
         }
         1008 => {
-            cfg.cx = cfg.screencols - 1;
+            if cfg.cy < cfg.numrows {
+                cfg.cx = cfg.rows[cfg.cy].chars.len();
+            }
         }
         _ => (),
     }
@@ -445,6 +459,7 @@ fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
 }
 
 fn editor_open(cfg: &mut EditorConfig, filename: &str) {
+    cfg.filename = filename.to_string();
     let file = std::fs::File::open(filename).unwrap();
     let reader = BufReader::new(file);
     for line in reader.lines() {
