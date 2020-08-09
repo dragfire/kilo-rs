@@ -2,7 +2,7 @@
 A terminal text editor using Rust
 
 ## Demo:
-<img src="demo.gif" alt="Kilo" width="600"/>
+<img src="demo.gif" alt="Kilo" width="1440"/>
 
 ## TODO:
 - [x] Editor text viewer
