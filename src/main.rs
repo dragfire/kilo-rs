@@ -2,6 +2,7 @@ use std::env;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::process::exit;
+use std::time::{Duration, SystemTime};
 use termios::*;
 
 const KILO_TAB_STOP: usize = 8;
@@ -24,7 +25,9 @@ struct EditorConfig {
     rows: Vec<Row>,
     term: Termios,
     fd: RawFd,
-    filename: String,
+    filename: Option<String>,
+    status_msg_time: SystemTime,
+    status_msg: String,
 }
 
 #[derive(Eq, PartialEq)]
@@ -99,7 +102,9 @@ impl Default for EditorConfig {
             numrows: 0,
             screenrows,
             screencols,
-            filename: String::new(),
+            filename: None,
+            status_msg: String::new(),
+            status_msg_time: SystemTime::now(),
         }
     }
 }
@@ -321,14 +326,49 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
     }
 }
 
+fn editor_set_status_msg(cfg: &mut EditorConfig, msg: String) {
+    cfg.status_msg = msg;
+    cfg.status_msg_time = SystemTime::now();
+}
+
 fn editor_draw_status_bar(cfg: &EditorConfig, abuf: &mut String) {
     abuf.push_str("\x1b[7m");
-    let status = String::new();
+    let status = format!(
+        "{0:.20} - {1} lines",
+        cfg.filename.as_ref().unwrap_or(&"[No Name]".to_string()),
+        cfg.numrows
+    );
+    let rstatus = format!("{}/{}", cfg.cy + 1, cfg.numrows);
+    let rlen = rstatus.len();
 
-    for _ in 0..cfg.screencols {
-        abuf.push_str(" ");
+    let mut len = status.len();
+    if len > cfg.screencols {
+        len = cfg.screencols;
     }
+    abuf.push_str(&status);
+
+    for i in len..cfg.screencols {
+        if cfg.screencols - i == rlen {
+            abuf.push_str(&rstatus);
+            break;
+        } else {
+            abuf.push_str(" ");
+        }
+    }
+
     abuf.push_str("\x1b[m");
+    abuf.push_str("\r\n");
+}
+
+fn editor_draw_message_bar(cfg: &EditorConfig, abuf: &mut String) {
+    abuf.push_str("\x1b[K");
+    let mut len = cfg.status_msg.len();
+    if len > cfg.screencols {
+        len = cfg.screencols;
+    }
+    if len > 0 && cfg.status_msg_time.elapsed().unwrap() < Duration::from_secs(5) {
+        abuf.push_str(&cfg.status_msg);
+    }
 }
 
 fn editor_refresh_screen(cfg: &mut EditorConfig) {
@@ -342,6 +382,7 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
 
     editor_draw_rows(cfg, &mut abuf);
     editor_draw_status_bar(cfg, &mut abuf);
+    editor_draw_message_bar(cfg, &mut abuf);
 
     abuf.push_str(&format!(
         "\x1b[{};{}H",
@@ -459,7 +500,7 @@ fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
 }
 
 fn editor_open(cfg: &mut EditorConfig, filename: &str) {
-    cfg.filename = filename.to_string();
+    cfg.filename = Some(filename.to_string());
     let file = std::fs::File::open(filename).unwrap();
     let reader = BufReader::new(file);
     for line in reader.lines() {
@@ -499,6 +540,8 @@ fn main() {
         let filename = &args[1];
         editor_open(&mut cfg, filename);
     }
+
+    editor_set_status_msg(&mut cfg, "HELP: Ctrl-Q = quit".to_string());
 
     loop {
         editor_refresh_screen(&mut cfg);
