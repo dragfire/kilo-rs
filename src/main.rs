@@ -32,7 +32,8 @@ struct EditorConfig {
 
 #[derive(Eq, PartialEq)]
 enum EditorKey {
-    ArrowLeft = 1000,
+    Char(char),
+    ArrowLeft,
     ArrowRight,
     ArrowUp,
     ArrowDown,
@@ -41,42 +42,7 @@ enum EditorKey {
     PageDown,
     HomeKey,
     EndKey,
-    EscapeSeq = 0x1b,
-}
-
-impl From<EditorKey> for usize {
-    fn from(key: EditorKey) -> Self {
-        match key {
-            EditorKey::ArrowLeft => 1000,
-            EditorKey::ArrowRight => 1001,
-            EditorKey::ArrowUp => 1002,
-            EditorKey::ArrowDown => 1003,
-            EditorKey::DeleteKey => 1004,
-            EditorKey::PageUp => 1005,
-            EditorKey::PageDown => 1006,
-            EditorKey::HomeKey => 1007,
-            EditorKey::EndKey => 1008,
-            EditorKey::EscapeSeq => 0x1b,
-        }
-    }
-}
-
-impl From<usize> for EditorKey {
-    fn from(key: usize) -> Self {
-        match key {
-            1000 => EditorKey::ArrowLeft,
-            1001 => EditorKey::ArrowRight,
-            1002 => EditorKey::ArrowUp,
-            1003 => EditorKey::ArrowDown,
-            1004 => EditorKey::DeleteKey,
-            1005 => EditorKey::PageUp,
-            1006 => EditorKey::PageDown,
-            1007 => EditorKey::HomeKey,
-            1008 => EditorKey::EndKey,
-            0x1b => EditorKey::EscapeSeq,
-            _ => EditorKey::EscapeSeq,
-        }
-    }
+    EscapeSeq,
 }
 
 // TODO Implement `Result`, remove `unwrap`.
@@ -163,8 +129,8 @@ fn get_cursor_position() -> Option<(usize, usize)> {
     }
 }
 
-fn ctrl_key(k: char) -> usize {
-    (k as u8 & 0x1f) as usize
+fn ctrl_key(k: char) -> u8 {
+    k as u8 & 0x1f
 }
 
 fn enable_raw_mode(cfg: &EditorConfig) -> Result<(), io::Error> {
@@ -189,7 +155,7 @@ fn disable_raw_mode(raw: &Termios) -> Result<(), io::Error> {
 /// Read a key and wait for the next one.
 ///
 /// It also handles keys with Escape sequences.
-fn editor_read_key() -> usize {
+fn editor_read_key() -> EditorKey {
     let mut inp = io::stdin();
     let mut c = [0];
     loop {
@@ -204,8 +170,8 @@ fn editor_read_key() -> usize {
         }
     }
 
-    let c = c[0] as usize;
-    let esc_seq = EditorKey::EscapeSeq.into();
+    let c = c[0];
+    let esc_seq = 0x1b;
 
     if c == esc_seq {
         let mut seq = [0 as u8; 3];
@@ -217,37 +183,37 @@ fn editor_read_key() -> usize {
             if seq[1] >= '0' as u8 && seq[1] <= '9' as u8 {
                 if seq[2] as char == '~' {
                     return match seq1_char {
-                        '1' => EditorKey::HomeKey.into(),
-                        '3' => EditorKey::DeleteKey.into(),
-                        '4' => EditorKey::EndKey.into(),
-                        '5' => EditorKey::PageUp.into(),
-                        '6' => EditorKey::PageDown.into(),
-                        '7' => EditorKey::HomeKey.into(),
-                        '8' => EditorKey::EndKey.into(),
-                        _ => esc_seq,
+                        '1' => EditorKey::HomeKey,
+                        '3' => EditorKey::DeleteKey,
+                        '4' => EditorKey::EndKey,
+                        '5' => EditorKey::PageUp,
+                        '6' => EditorKey::PageDown,
+                        '7' => EditorKey::HomeKey,
+                        '8' => EditorKey::EndKey,
+                        _ => EditorKey::EscapeSeq,
                     };
                 }
             } else {
                 return match seq1_char {
-                    'A' => EditorKey::ArrowUp.into(),
-                    'B' => EditorKey::ArrowDown.into(),
-                    'C' => EditorKey::ArrowRight.into(),
-                    'D' => EditorKey::ArrowLeft.into(),
-                    _ => esc_seq,
+                    'A' => EditorKey::ArrowUp,
+                    'B' => EditorKey::ArrowDown,
+                    'C' => EditorKey::ArrowRight,
+                    'D' => EditorKey::ArrowLeft,
+                    _ => EditorKey::EscapeSeq,
                 };
             }
         } else if seq0_char == '0' {
             if seq1_char == 'H' {
-                return EditorKey::HomeKey.into();
+                return EditorKey::HomeKey;
             } else if seq1_char == 'F' {
-                return EditorKey::EndKey.into();
+                return EditorKey::EndKey;
             } else {
-                return esc_seq;
+                return EditorKey::EscapeSeq;
             }
         }
     }
 
-    c
+    EditorKey::Char(c as char)
 }
 
 fn term_refresh() {
@@ -400,19 +366,16 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
     let ctrl_q = ctrl_key('q');
 
     match c {
-        x if x == ctrl_q => {
-            term_refresh();
-            disable_raw_mode(&cfg.term).unwrap();
-            exit(0);
+        EditorKey::ArrowUp
+        | EditorKey::ArrowDown
+        | EditorKey::ArrowLeft
+        | EditorKey::ArrowRight => {
+            editor_move_cursor(cfg, c);
         }
-        1000..=1004 => {
-            editor_move_cursor(cfg, c.into());
-        }
-        1005 | 1006 => {
-            let key: EditorKey = c.into();
-            if key == EditorKey::PageUp {
+        EditorKey::PageUp | EditorKey::PageDown => {
+            if c == EditorKey::PageUp {
                 cfg.cy = cfg.rowoff;
-            } else if key == EditorKey::PageDown {
+            } else if c == EditorKey::PageDown {
                 cfg.cy = cfg.rowoff + cfg.screenrows - 1;
                 if cfg.cy > cfg.numrows {
                     cfg.cy = cfg.numrows;
@@ -420,7 +383,7 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
             }
 
             for _ in 0..cfg.screenrows {
-                let key = if key == EditorKey::PageUp {
+                let key = if c == EditorKey::PageUp {
                     EditorKey::ArrowUp
                 } else {
                     EditorKey::ArrowDown
@@ -429,13 +392,21 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
                 editor_move_cursor(cfg, key);
             }
         }
-        1007 => {
+        EditorKey::HomeKey => {
             cfg.cx = 0;
         }
-        1008 => {
+        EditorKey::EndKey => {
             if cfg.cy < cfg.numrows {
                 cfg.cx = cfg.rows[cfg.cy].chars.len();
             }
+        }
+        EditorKey::Char(c) => {
+            if ctrl_q == c as u8 {
+                term_refresh();
+                disable_raw_mode(&cfg.term).unwrap();
+                exit(0);
+            }
+            editor_insert_char(cfg, c);
         }
         _ => (),
     }
@@ -499,17 +470,21 @@ fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
     rx
 }
 
+fn editor_append_row(cfg: &mut EditorConfig, chars: String) {
+    let mut row = Row::default();
+    row.chars = chars.to_string();
+    row.render = chars;
+    editor_update_row(&mut row);
+    cfg.rows.push(row);
+}
+
 fn editor_open(cfg: &mut EditorConfig, filename: &str) {
     cfg.filename = Some(filename.to_string());
     let file = std::fs::File::open(filename).unwrap();
     let reader = BufReader::new(file);
     for line in reader.lines() {
         let line = line.unwrap();
-        let mut row = Row::default();
-        row.chars = line.to_string();
-        row.render = line;
-        editor_update_row(&mut row);
-        cfg.rows.push(row);
+        editor_append_row(cfg, line);
     }
 
     cfg.numrows = cfg.rows.len();
@@ -529,6 +504,22 @@ fn editor_update_row(row: &mut Row) {
             }
         }
     }
+}
+
+fn editor_row_insert_char(row: &mut Row, mut at: usize, c: char) {
+    if at > row.chars.len() {
+        at = row.chars.len();
+    }
+    row.chars.insert(at, c);
+    editor_update_row(row);
+}
+
+fn editor_insert_char(cfg: &mut EditorConfig, c: char) {
+    if cfg.cy == cfg.numrows {
+        editor_append_row(cfg, String::new());
+    }
+    editor_row_insert_char(&mut cfg.rows[cfg.cy], cfg.cx, c);
+    cfg.cx += 1;
 }
 
 fn main() {
