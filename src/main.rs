@@ -396,6 +396,7 @@ fn editor_open(cfg: &mut EditorConfig, filename: &str) {
 
 fn editor_update_row(row: &mut Row) {
     let mut idx = 0;
+    row.render.clear();
 
     for c in row.chars.chars() {
         if c == '\t' {
@@ -406,6 +407,8 @@ fn editor_update_row(row: &mut Row) {
                 row.render.push(' ');
                 idx += 1;
             }
+        } else {
+            row.render.push(c);
         }
     }
 }
@@ -414,7 +417,7 @@ fn editor_row_insert_char(row: &mut Row, mut at: usize, c: char) {
     if at > row.chars.len() {
         at = row.chars.len();
     }
-    row.chars.push(c);
+    row.chars.insert(at, c);
     editor_update_row(row);
 }
 
