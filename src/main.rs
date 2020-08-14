@@ -54,7 +54,7 @@ impl Default for EditorConfig {
         tcgetattr(fd, &mut term).unwrap();
 
         let (mut screenrows, screencols) = get_window_size().unwrap();
-        screenrows -= 1;
+        screenrows -= 2;
 
         EditorConfig {
             cx: 0,
@@ -361,6 +361,71 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
     out.flush().unwrap();
 }
 
+fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
+    let mut rx = 0;
+    let slice = &row.chars[..cx];
+    for c in slice.chars() {
+        if c == '\t' {
+            rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+        }
+        rx += 1;
+    }
+
+    rx
+}
+
+fn editor_append_row(cfg: &mut EditorConfig, chars: String) {
+    let mut row = Row::default();
+    row.chars = chars.to_string();
+    row.render = chars;
+    editor_update_row(&mut row);
+    cfg.rows.push(row);
+}
+
+fn editor_open(cfg: &mut EditorConfig, filename: &str) {
+    cfg.filename = Some(filename.to_string());
+    let file = std::fs::File::open(filename).unwrap();
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line.unwrap();
+        editor_append_row(cfg, line);
+    }
+
+    cfg.numrows = cfg.rows.len();
+}
+
+fn editor_update_row(row: &mut Row) {
+    let mut idx = 0;
+
+    for c in row.chars.chars() {
+        if c == '\t' {
+            row.render.push(' ');
+            idx += 1;
+
+            while idx % KILO_TAB_STOP != 0 {
+                row.render.push(' ');
+                idx += 1;
+            }
+        }
+    }
+}
+
+fn editor_row_insert_char(row: &mut Row, mut at: usize, c: char) {
+    if at > row.chars.len() {
+        at = row.chars.len();
+    }
+    row.chars.push(c);
+    editor_update_row(row);
+}
+
+fn editor_insert_char(cfg: &mut EditorConfig, c: char) {
+    if cfg.cy == cfg.numrows {
+        editor_append_row(cfg, String::new());
+    }
+    editor_row_insert_char(&mut cfg.rows[cfg.cy], cfg.cx, c);
+    cfg.cx += 1;
+}
+
 fn editor_process_keypress(cfg: &mut EditorConfig) {
     let c = editor_read_key();
     let ctrl_q = ctrl_key('q');
@@ -455,71 +520,6 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
     if cfg.cx > rowlen {
         cfg.cx = rowlen;
     }
-}
-
-fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
-    let mut rx = 0;
-    let slice = &row.chars[..cx];
-    for c in slice.chars() {
-        if c == '\t' {
-            rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
-        }
-        rx += 1;
-    }
-
-    rx
-}
-
-fn editor_append_row(cfg: &mut EditorConfig, chars: String) {
-    let mut row = Row::default();
-    row.chars = chars.to_string();
-    row.render = chars;
-    editor_update_row(&mut row);
-    cfg.rows.push(row);
-}
-
-fn editor_open(cfg: &mut EditorConfig, filename: &str) {
-    cfg.filename = Some(filename.to_string());
-    let file = std::fs::File::open(filename).unwrap();
-    let reader = BufReader::new(file);
-    for line in reader.lines() {
-        let line = line.unwrap();
-        editor_append_row(cfg, line);
-    }
-
-    cfg.numrows = cfg.rows.len();
-}
-
-fn editor_update_row(row: &mut Row) {
-    let mut idx = 0;
-
-    for c in row.chars.chars() {
-        if c == '\t' {
-            row.render.push(' ');
-            idx += 1;
-
-            while idx % KILO_TAB_STOP != 0 {
-                row.render.push(' ');
-                idx += 1;
-            }
-        }
-    }
-}
-
-fn editor_row_insert_char(row: &mut Row, mut at: usize, c: char) {
-    if at > row.chars.len() {
-        at = row.chars.len();
-    }
-    row.chars.insert(at, c);
-    editor_update_row(row);
-}
-
-fn editor_insert_char(cfg: &mut EditorConfig, c: char) {
-    if cfg.cy == cfg.numrows {
-        editor_append_row(cfg, String::new());
-    }
-    editor_row_insert_char(&mut cfg.rows[cfg.cy], cfg.cx, c);
-    cfg.cx += 1;
 }
 
 fn main() {
