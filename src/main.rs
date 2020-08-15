@@ -460,13 +460,25 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
                 len = cfg.screencols;
             }
 
-            let mut slice = rows[filerow].render.as_str();
-            if cfg.coloff < cfg.coloff + len {
-                slice = &slice[cfg.coloff..cfg.coloff + len];
-            } else {
-                slice = "";
+            let render = &rows[filerow].render;
+            // if cfg.coloff < cfg.coloff + len {
+            //     slice = &slice[cfg.coloff..cfg.coloff + len];
+            // } else {
+            //     slice = "";
+            // }
+            // abuf.push_str(slice);
+            for (i, c) in render.chars().enumerate() {
+                if i == len {
+                    break;
+                }
+                if c.is_ascii_digit() {
+                    abuf.push_str("\x1b[31m");
+                    abuf.push(c);
+                    abuf.push_str("\x1b[39m");
+                } else {
+                    abuf.push(c);
+                }
             }
-            abuf.push_str(slice);
         }
 
         abuf.push_str("\x1b[K");
