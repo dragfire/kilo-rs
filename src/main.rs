@@ -20,6 +20,12 @@ struct Row {
     render: String,
 }
 
+#[derive(Eq, PartialEq)]
+enum Direction {
+    Forward,
+    Backward,
+}
+
 struct EditorConfig {
     cx: usize,
     cy: usize,
@@ -37,6 +43,8 @@ struct EditorConfig {
     filename: Option<String>,
     status_msg: String,
     status_msg_time: SystemTime,
+    last_match: isize,
+    direction: Direction,
 }
 
 /// EditorKey represents all Keys pressed
@@ -84,6 +92,8 @@ impl Default for EditorConfig {
             filename: None,
             status_msg: String::new(),
             status_msg_time: SystemTime::now(),
+            last_match: -1,
+            direction: Direction::Forward,
         }
     }
 }
@@ -317,14 +327,49 @@ fn editor_del_char(cfg: &mut EditorConfig) {
 // *** Find ***
 
 fn editor_find_callback(cfg: &mut EditorConfig, query: &str, key: EditorKey) {
-    if key == EditorKey::CarriageReturn || key == EditorKey::EscapeSeq {
-        return;
+    match key {
+        EditorKey::CarriageReturn | EditorKey::EscapeSeq => {
+            cfg.last_match = -1;
+            cfg.direction = Direction::Forward;
+            return;
+        }
+        EditorKey::ArrowRight | EditorKey::ArrowDown => {
+            cfg.direction = Direction::Forward;
+        }
+        EditorKey::ArrowLeft | EditorKey::ArrowUp => {
+            cfg.direction = Direction::Backward;
+        }
+        _ => {
+            cfg.last_match = -1;
+            cfg.direction = Direction::Forward;
+        }
     }
 
-    for (i, row) in cfg.rows.iter().enumerate() {
+    if cfg.last_match == -1 {
+        cfg.direction = Direction::Forward;
+    }
+
+    let mut current = cfg.last_match;
+    for _ in 0..cfg.numrows {
+        match cfg.direction {
+            Direction::Forward => {
+                current += 1;
+            }
+            Direction::Backward => {
+                current -= 1;
+            }
+        }
+        if current == -1 {
+            current = (cfg.numrows - 1) as isize;
+        } else if current == cfg.numrows as isize {
+            current = 0;
+        }
+
+        let row = &cfg.rows[current as usize];
         let match_index = row.render.find(query);
         if let Some(index) = match_index {
-            cfg.cy = i;
+            cfg.last_match = current;
+            cfg.cy = current as usize;
             cfg.cx = editor_row_rx_to_cx(row, index);
             cfg.rowoff = cfg.numrows;
             break;
@@ -340,7 +385,7 @@ fn editor_find(cfg: &mut EditorConfig) {
 
     editor_prompt(
         cfg,
-        |buf| format!("Search: {} (ESC to Cancel)", buf),
+        |buf| format!("Search: {} (Use ESC/Arrows/Enter)", buf),
         Some(editor_find_callback),
     );
 
