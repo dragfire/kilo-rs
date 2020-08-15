@@ -178,6 +178,24 @@ fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
     rx
 }
 
+fn editor_row_rx_to_cx(row: &Row, rx: usize) -> usize {
+    let mut cur_rx = 0;
+    let n = row.chars.len();
+    let slice = &row.chars[..n];
+    for (cx, c) in slice.chars().enumerate() {
+        if c == '\t' {
+            cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
+        }
+        cur_rx += 1;
+
+        if cur_rx > rx {
+            return cx;
+        }
+    }
+
+    n
+}
+
 fn editor_insert_row(cfg: &mut EditorConfig, chars: String, at: usize) {
     if at > cfg.numrows {
         return;
@@ -294,6 +312,32 @@ fn editor_del_char(cfg: &mut EditorConfig) {
         }
         cfg.dirty = true;
     }
+}
+
+// *** Find ***
+
+fn editor_find_callback(cfg: &mut EditorConfig, query: &str, key: EditorKey) {
+    if key == EditorKey::CarriageReturn || key == EditorKey::EscapeSeq {
+        return;
+    }
+
+    for (i, row) in cfg.rows.iter().enumerate() {
+        let match_index = row.render.find(query);
+        if let Some(index) = match_index {
+            cfg.cy = i;
+            cfg.cx = editor_row_rx_to_cx(row, index);
+            cfg.rowoff = cfg.numrows;
+            break;
+        }
+    }
+}
+
+fn editor_find(cfg: &mut EditorConfig) {
+    editor_prompt(
+        cfg,
+        |buf| format!("Search: {} (ESC to Cancel)", buf),
+        Some(editor_find_callback),
+    );
 }
 
 // *** Output ***
@@ -454,9 +498,11 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
 /// Prompt user to take in input.
 ///
 /// Construct message for prompt using a closure.
-fn editor_prompt<F>(cfg: &mut EditorConfig, message: F) -> Option<String>
+/// Take in an optional Callback
+fn editor_prompt<F, C>(cfg: &mut EditorConfig, message: F, callback: Option<C>) -> Option<String>
 where
     F: Fn(&str) -> String,
+    C: Fn(&mut EditorConfig, &str, EditorKey),
 {
     let mut buf = String::new();
     loop {
@@ -467,11 +513,17 @@ where
         match key {
             EditorKey::EscapeSeq => {
                 editor_set_status_msg(cfg, String::new());
+                if let Some(cb) = callback.as_ref() {
+                    cb(cfg, &buf, key);
+                }
                 return None;
             }
             EditorKey::CarriageReturn => {
                 if buf.len() != 0 {
                     editor_set_status_msg(cfg, String::new());
+                    if let Some(cb) = callback.as_ref() {
+                        cb(cfg, &buf, key);
+                    }
                     return Some(buf);
                 }
             }
@@ -482,6 +534,9 @@ where
                 buf.pop();
             }
             _ => (),
+        }
+        if let Some(cb) = callback.as_ref() {
+            cb(cfg, &buf, key);
         }
     }
 }
@@ -628,6 +683,8 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
                 exit(0);
             } else if c == ctrl_key('s') {
                 editor_save(cfg);
+            } else if c == ctrl_key('f') {
+                editor_find(cfg);
             }
         }
         EditorKey::Char(c) => {
@@ -712,7 +769,11 @@ fn editor_rows_to_string(cfg: &EditorConfig) -> String {
 }
 
 fn editor_save(cfg: &mut EditorConfig) {
-    cfg.filename = editor_prompt(cfg, |buf| format!("Save as: {} (ESC to Cancel)", buf));
+    cfg.filename = editor_prompt(
+        cfg,
+        |buf| format!("Save as: {} (ESC to Cancel)", buf),
+        None::<fn(&mut EditorConfig, &str, EditorKey)>,
+    );
     if cfg.filename.is_none() {
         editor_set_status_msg(cfg, "Save aborted!".to_string());
     }
@@ -750,7 +811,10 @@ fn main() {
         editor_open(&mut cfg, filename);
     }
 
-    editor_set_status_msg(&mut cfg, "HELP: Ctrl-S = save | Ctrl-Q = quit".to_string());
+    editor_set_status_msg(
+        &mut cfg,
+        "HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find".to_string(),
+    );
 
     loop {
         editor_refresh_screen(&mut cfg);
