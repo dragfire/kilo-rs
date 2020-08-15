@@ -451,10 +451,16 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
 
 // *** Input ***
 
-fn editor_prompt(cfg: &mut EditorConfig, prompt: &str) -> Option<String> {
+/// Prompt user to take in input.
+///
+/// Construct message for prompt using a closure.
+fn editor_prompt<F>(cfg: &mut EditorConfig, message: F) -> Option<String>
+where
+    F: Fn(&str) -> String,
+{
     let mut buf = String::new();
     loop {
-        editor_set_status_msg(cfg, format!("{} {}", prompt, buf));
+        editor_set_status_msg(cfg, message(&buf));
         editor_refresh_screen(cfg);
 
         let key = editor_read_key();
@@ -706,7 +712,7 @@ fn editor_rows_to_string(cfg: &EditorConfig) -> String {
 }
 
 fn editor_save(cfg: &mut EditorConfig) {
-    cfg.filename = editor_prompt(cfg, "Save as (ESC to Cancel):");
+    cfg.filename = editor_prompt(cfg, |buf| format!("Save as: {} (ESC to Cancel)", buf));
     if cfg.filename.is_none() {
         editor_set_status_msg(cfg, "Save aborted!".to_string());
     }
