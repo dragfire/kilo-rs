@@ -333,11 +333,21 @@ fn editor_find_callback(cfg: &mut EditorConfig, query: &str, key: EditorKey) {
 }
 
 fn editor_find(cfg: &mut EditorConfig) {
+    let saved_cx = cfg.cx;
+    let saved_cy = cfg.cy;
+    let saved_coloff = cfg.coloff;
+    let saved_rowoff = cfg.rowoff;
+
     editor_prompt(
         cfg,
         |buf| format!("Search: {} (ESC to Cancel)", buf),
         Some(editor_find_callback),
     );
+
+    cfg.cx = saved_cx;
+    cfg.cy = saved_cy;
+    cfg.coloff = saved_coloff;
+    cfg.rowoff = saved_rowoff;
 }
 
 // *** Output ***
