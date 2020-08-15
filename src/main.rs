@@ -178,12 +178,16 @@ fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
     rx
 }
 
-fn editor_append_row(cfg: &mut EditorConfig, chars: String) {
+fn editor_insert_row(cfg: &mut EditorConfig, chars: String, at: usize) {
+    if at > cfg.numrows {
+        return;
+    }
     let mut row = Row::default();
     row.chars = chars.to_string();
     row.render = chars;
     editor_update_row(&mut row);
-    cfg.rows.push(row);
+    cfg.rows.insert(at, row);
+    cfg.numrows = cfg.rows.len();
     cfg.dirty = true;
 }
 
@@ -245,31 +249,51 @@ fn editor_row_append_str(row: &mut Row, s: &str) {
 
 fn editor_insert_char(cfg: &mut EditorConfig, c: char) {
     if cfg.cy == cfg.numrows {
-        editor_append_row(cfg, String::new());
+        editor_insert_row(cfg, String::new(), 0);
     }
     editor_row_insert_char(&mut cfg.rows[cfg.cy], cfg.cx, c);
     cfg.cx += 1;
     cfg.dirty = true;
 }
 
+fn editor_insert_new_line(cfg: &mut EditorConfig) {
+    if cfg.cx == 0 {
+        editor_insert_row(cfg, String::new(), 0);
+    } else {
+        let chars = cfg.rows[cfg.cy].chars.to_owned();
+        editor_insert_row(cfg, String::from(&chars[cfg.cx..]), cfg.cy + 1);
+
+        let mut row = &mut cfg.rows[cfg.cy];
+        row.chars = String::from(&chars[..cfg.cx]);
+        editor_update_row(&mut row);
+    }
+    cfg.cy += 1;
+    cfg.cx = 0;
+}
+
 fn editor_del_char(cfg: &mut EditorConfig) {
-    if cfg.cy == cfg.numrows || (cfg.cx == 0 && cfg.cy == 0) {
+    if cfg.cy == cfg.numrows {
+        return;
+    }
+    if cfg.cx == 0 && cfg.cy == 0 {
         return;
     }
 
-    let (left, right) = cfg.rows.split_at_mut(cfg.cy);
-    let row = &mut right[0];
-    if cfg.cx > 0 {
-        editor_row_del_char(row, cfg.cx - 1);
-        cfg.cx -= 1;
-    } else {
-        let prev_row = &mut left[left.len() - 1];
-        cfg.cx = prev_row.chars.len();
-        editor_row_append_str(prev_row, row.chars.as_str());
-        editor_del_row(cfg, cfg.cy);
-        cfg.cy -= 1;
+    if cfg.cy <= cfg.rows.len() {
+        let (left, right) = cfg.rows.split_at_mut(cfg.cy);
+        let row = &mut right[0];
+        if cfg.cx > 0 {
+            editor_row_del_char(row, cfg.cx - 1);
+            cfg.cx -= 1;
+        } else {
+            let prev_row = &mut left[left.len() - 1];
+            cfg.cx = prev_row.chars.len();
+            editor_row_append_str(prev_row, row.chars.as_str());
+            editor_del_row(cfg, cfg.cy);
+            cfg.cy -= 1;
+        }
+        cfg.dirty = true;
     }
-    cfg.dirty = true;
 }
 
 // *** Output ***
@@ -427,6 +451,35 @@ fn editor_refresh_screen(cfg: &mut EditorConfig) {
 
 // *** Input ***
 
+fn editor_prompt(cfg: &mut EditorConfig, prompt: &str) -> Option<String> {
+    let mut buf = String::new();
+    loop {
+        editor_set_status_msg(cfg, format!("{} {}", prompt, buf));
+        editor_refresh_screen(cfg);
+
+        let key = editor_read_key();
+        match key {
+            EditorKey::EscapeSeq => {
+                editor_set_status_msg(cfg, String::new());
+                return None;
+            }
+            EditorKey::CarriageReturn => {
+                if buf.len() != 0 {
+                    editor_set_status_msg(cfg, String::new());
+                    return Some(buf);
+                }
+            }
+            EditorKey::Char(ch) => {
+                buf.push(ch);
+            }
+            EditorKey::DeleteKey | EditorKey::Backspace => {
+                buf.pop();
+            }
+            _ => (),
+        }
+    }
+}
+
 /// Create Ctrl Codes
 ///
 /// Example: Ctrl-A, Ctrl-B
@@ -493,17 +546,18 @@ fn editor_read_key() -> EditorKey {
                 return EditorKey::EscapeSeq;
             }
         }
+        return EditorKey::EscapeSeq;
     } else if c == 127 {
         return EditorKey::Backspace;
     }
     let ch = c as char;
     if ch.is_ascii_control() {
-        EditorKey::Ctrl(ch)
-    } else {
         match ch {
-            '\r' => EditorKey::CarriageReturn,
-            _ => EditorKey::Char(ch),
+            '\n' | '\r' => EditorKey::CarriageReturn,
+            _ => EditorKey::Ctrl(ch),
         }
+    } else {
+        EditorKey::Char(ch)
     }
 }
 
@@ -511,6 +565,10 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
     let c = editor_read_key();
 
     match c {
+        EditorKey::CarriageReturn => {
+            editor_move_cursor(cfg, EditorKey::ArrowRight);
+            editor_insert_new_line(cfg);
+        }
         EditorKey::ArrowUp
         | EditorKey::ArrowDown
         | EditorKey::ArrowLeft
@@ -628,9 +686,9 @@ fn editor_open(cfg: &mut EditorConfig, filename: &str) {
     cfg.filename = Some(filename.to_string());
     let file = File::open(filename).unwrap();
     let reader = BufReader::new(file);
-    for line in reader.lines() {
-        let line = line.unwrap();
-        editor_append_row(cfg, line);
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.expect("Unexpected line");
+        editor_insert_row(cfg, line, i);
     }
 
     cfg.numrows = cfg.rows.len();
@@ -648,6 +706,11 @@ fn editor_rows_to_string(cfg: &EditorConfig) -> String {
 }
 
 fn editor_save(cfg: &mut EditorConfig) {
+    cfg.filename = editor_prompt(cfg, "Save as (ESC to Cancel):");
+    if cfg.filename.is_none() {
+        editor_set_status_msg(cfg, "Save aborted!".to_string());
+    }
+
     if let Some(filename) = cfg.filename.as_ref() {
         let buf = editor_rows_to_string(cfg);
         let mut fd = OpenOptions::new()
