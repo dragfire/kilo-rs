@@ -18,12 +18,30 @@ const KILO_QUIT_TIMES: usize = 3;
 struct Row {
     chars: String,
     render: String,
+    hl: Vec<Highlight>,
 }
 
 #[derive(Eq, PartialEq)]
 enum Direction {
     Forward,
     Backward,
+}
+
+#[derive(Eq, PartialEq, Clone, Copy)]
+enum Highlight {
+    Normal,
+    Number,
+    Match,
+}
+
+impl<'a> From<Highlight> for i32 {
+    fn from(hl: Highlight) -> i32 {
+        match hl {
+            Highlight::Number => 31,
+            Highlight::Match => 34,
+            _ => 37,
+        }
+    }
 }
 
 struct EditorConfig {
@@ -45,6 +63,8 @@ struct EditorConfig {
     status_msg_time: SystemTime,
     last_match: isize,
     direction: Direction,
+    saved_hl_line: isize,
+    saved_hl: Option<Vec<Highlight>>,
 }
 
 /// EditorKey represents all Keys pressed
@@ -94,6 +114,8 @@ impl Default for EditorConfig {
             status_msg_time: SystemTime::now(),
             last_match: -1,
             direction: Direction::Forward,
+            saved_hl_line: -1,
+            saved_hl: None,
         }
     }
 }
@@ -173,6 +195,18 @@ fn disable_raw_mode(raw: &Termios) -> Result<(), io::Error> {
     Ok(())
 }
 
+// *** Syntax Highlighting ***
+
+fn editor_update_syntax(row: &mut Row) {
+    let n = row.render.len();
+    row.hl = vec![Highlight::Normal; n];
+    for (i, c) in row.render.chars().enumerate() {
+        if c.is_ascii_digit() {
+            row.hl[i] = Highlight::Number;
+        }
+    }
+}
+
 // *** Row Operations ***
 
 fn editor_row_cx_to_rx(row: &Row, cx: usize) -> usize {
@@ -211,8 +245,7 @@ fn editor_insert_row(cfg: &mut EditorConfig, chars: String, at: usize) {
         return;
     }
     let mut row = Row::default();
-    row.chars = chars.to_string();
-    row.render = chars;
+    row.chars = chars;
     editor_update_row(&mut row);
     cfg.rows.insert(at, row);
     cfg.numrows = cfg.rows.len();
@@ -236,11 +269,14 @@ fn editor_update_row(row: &mut Row) {
             row.render.push(c);
         }
     }
+
+    editor_update_syntax(row);
 }
 
 fn editor_free_row(row: &mut Row) {
     row.chars.clear();
     row.render.clear();
+    row.hl.clear();
 }
 
 fn editor_del_row(cfg: &mut EditorConfig, at: usize) {
@@ -327,6 +363,13 @@ fn editor_del_char(cfg: &mut EditorConfig) {
 // *** Find ***
 
 fn editor_find_callback(cfg: &mut EditorConfig, query: &str, key: EditorKey) {
+    if let Some(ref saved_hl) = cfg.saved_hl {
+        let row = &mut cfg.rows[cfg.saved_hl_line as usize];
+        let original_hl = &mut row.hl;
+        for (i, el) in original_hl.iter_mut().enumerate() {
+            *el = saved_hl[i];
+        }
+    }
     match key {
         EditorKey::CarriageReturn | EditorKey::EscapeSeq => {
             cfg.last_match = -1;
@@ -365,13 +408,22 @@ fn editor_find_callback(cfg: &mut EditorConfig, query: &str, key: EditorKey) {
             current = 0;
         }
 
-        let row = &cfg.rows[current as usize];
+        let row = &mut cfg.rows[current as usize];
         let match_index = row.render.find(query);
         if let Some(index) = match_index {
             cfg.last_match = current;
             cfg.cy = current as usize;
             cfg.cx = editor_row_rx_to_cx(row, index);
             cfg.rowoff = cfg.numrows;
+
+            cfg.saved_hl_line = current;
+            cfg.saved_hl = Some(row.hl.clone());
+
+            let slice = &mut row.hl[index..index + query.len()];
+            for el in slice {
+                *el = Highlight::Match;
+            }
+
             break;
         }
     }
@@ -451,34 +503,45 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
                 abuf.push('~');
             }
         } else {
-            let rows = &cfg.rows;
+            let row = &cfg.rows[filerow];
 
             // since I am using usize, need to avoid overflow error
             // when length of a row is less than coloff.
-            let mut len = rows[filerow].render.len().saturating_sub(cfg.coloff);
+            let mut len = row.render.len().saturating_sub(cfg.coloff);
             if len > cfg.screencols {
                 len = cfg.screencols;
             }
 
-            let render = &rows[filerow].render;
-            // if cfg.coloff < cfg.coloff + len {
-            //     slice = &slice[cfg.coloff..cfg.coloff + len];
-            // } else {
-            //     slice = "";
-            // }
-            // abuf.push_str(slice);
-            for (i, c) in render.chars().enumerate() {
+            let mut slice = row.render.as_str();
+            if cfg.coloff < cfg.coloff + len {
+                slice = &slice[cfg.coloff..cfg.coloff + len];
+            } else {
+                slice = "";
+            }
+
+            let hl = &row.hl;
+            let mut curr_color: i32 = -1;
+
+            for (i, c) in slice.chars().enumerate() {
                 if i == len {
                     break;
                 }
-                if c.is_ascii_digit() {
-                    abuf.push_str("\x1b[31m");
-                    abuf.push(c);
-                    abuf.push_str("\x1b[39m");
+
+                if hl[i] == Highlight::Normal {
+                    if curr_color != -1 {
+                        abuf.push_str("\x1b[39m");
+                        curr_color = -1;
+                    }
                 } else {
-                    abuf.push(c);
+                    let color: i32 = hl[i].into();
+                    if color != curr_color {
+                        curr_color = color;
+                        abuf.push_str(&format!("\x1b[{}m", color));
+                    }
                 }
+                abuf.push(c);
             }
+            abuf.push_str("\x1b[39m");
         }
 
         abuf.push_str("\x1b[K");
