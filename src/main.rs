@@ -1,7 +1,10 @@
+use std::collections::HashSet;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::iter::FromIterator;
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::path::Path;
 use std::process::exit;
 use std::time::{Duration, SystemTime};
 use termios::*;
@@ -78,10 +81,12 @@ impl EditorConfig {
         let (mut screenrows, screencols) = get_window_size().unwrap();
         screenrows -= 2;
 
+        let c_filematch = vec!["c".to_string(), "h".to_string(), "cpp".to_string()];
+
         let mut hldb = Vec::new();
         hldb.push(EditorSyntax::new(
             "c",
-            vec![".c".to_string(), ".h".to_string(), ".cpp".to_string()],
+            HashSet::from_iter(c_filematch),
             HighlightFlags::Numbers,
         ));
 
@@ -131,14 +136,15 @@ enum EditorKey {
     Backspace,
 }
 
+#[derive(Clone)]
 struct EditorSyntax {
     filetype: String,
-    filematch: Vec<String>,
+    filematch: HashSet<String>,
     flags: HighlightFlags,
 }
 
 impl EditorSyntax {
-    fn new(filetype: &str, filematch: Vec<String>, flags: HighlightFlags) -> Self {
+    fn new(filetype: &str, filematch: HashSet<String>, flags: HighlightFlags) -> Self {
         EditorSyntax {
             filetype: filetype.to_string(),
             filematch,
@@ -261,6 +267,26 @@ fn editor_update_syntax(syntax: Option<&EditorSyntax>, row: &mut Row) {
 /// Check if a character is a seperator character
 fn is_seperator(c: char) -> bool {
     c.is_ascii_whitespace() || ",.()+-/*=~%<>[];".contains(c)
+}
+
+fn editor_select_syntax_highlight(cfg: &mut EditorConfig) {
+    cfg.editor_syntax = None;
+    if cfg.filename.is_none() {
+        return;
+    }
+
+    let ext = Path::new(cfg.filename.as_ref().unwrap())
+        .extension()
+        .unwrap()
+        .to_str()
+        .unwrap();
+
+    for syntax in cfg.hldb.iter() {
+        if syntax.filematch.contains(ext) {
+            cfg.editor_syntax = Some(syntax.clone());
+            return;
+        }
+    }
 }
 
 // *** Row Operations ***
@@ -941,6 +967,7 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
 
 fn editor_open(cfg: &mut EditorConfig, filename: &str) {
     cfg.filename = Some(filename.to_string());
+    editor_select_syntax_highlight(cfg);
     let file = File::open(filename).unwrap();
     let reader = BufReader::new(file);
     for (i, line) in reader.lines().enumerate() {
@@ -971,6 +998,7 @@ fn editor_save(cfg: &mut EditorConfig) {
     if cfg.filename.is_none() {
         editor_set_status_msg(cfg, "Save aborted!".to_string());
     }
+    editor_select_syntax_highlight(cfg);
 
     if let Some(filename) = cfg.filename.as_ref() {
         let buf = editor_rows_to_string(cfg);
