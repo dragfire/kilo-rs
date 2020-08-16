@@ -388,19 +388,16 @@ fn editor_select_syntax_highlight(cfg: &mut EditorConfig) {
         return;
     }
 
-    let ext = Path::new(cfg.filename.as_ref().unwrap())
-        .extension()
-        .unwrap()
-        .to_str()
-        .unwrap();
-
-    for syntax in cfg.hldb.iter() {
-        if syntax.filematch.contains(ext) {
-            cfg.editor_syntax = Some(syntax.clone());
-            for row in cfg.rows.iter_mut() {
-                editor_update_syntax(cfg.editor_syntax.as_ref(), row);
+    let ext = Path::new(cfg.filename.as_ref().unwrap()).extension();
+    if let Some(ext) = ext {
+        for syntax in cfg.hldb.iter() {
+            if syntax.filematch.contains(ext.to_str().unwrap()) {
+                cfg.editor_syntax = Some(syntax.clone());
+                for row in cfg.rows.iter_mut() {
+                    editor_update_syntax(cfg.editor_syntax.as_ref(), row);
+                }
+                return;
             }
-            return;
         }
     }
 }
@@ -710,13 +707,7 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
                 len = cfg.screencols;
             }
 
-            let mut slice = row.render.as_str();
-            if cfg.coloff < cfg.coloff + len {
-                slice = &slice[cfg.coloff..cfg.coloff + len];
-            } else {
-                slice = "";
-            }
-
+            let slice = row.render.get(cfg.coloff..).unwrap();
             let hl = &row.hl;
             let mut curr_color: i32 = -1;
 
@@ -958,6 +949,12 @@ fn editor_read_key() -> EditorKey {
     }
 }
 
+fn exit_gracefully(cfg: &mut EditorConfig) {
+    term_refresh();
+    disable_raw_mode(&cfg.term).unwrap();
+    exit(0);
+}
+
 fn editor_process_keypress(cfg: &mut EditorConfig) {
     let c = editor_read_key();
 
@@ -1014,9 +1011,7 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
                     cfg.quit_times -= 1;
                     return;
                 }
-                term_refresh();
-                disable_raw_mode(&cfg.term).unwrap();
-                exit(0);
+                exit_gracefully(cfg);
             } else if c == ctrl_key('s') {
                 editor_save(cfg);
             } else if c == ctrl_key('f') {
@@ -1084,15 +1079,22 @@ fn editor_move_cursor(cfg: &mut EditorConfig, key: EditorKey) {
 fn editor_open(cfg: &mut EditorConfig, filename: &str) {
     cfg.filename = Some(filename.to_string());
     editor_select_syntax_highlight(cfg);
-    let file = File::open(filename).unwrap();
-    let reader = BufReader::new(file);
-    for (i, line) in reader.lines().enumerate() {
-        let line = line.expect("Unexpected line");
-        editor_insert_row(cfg, line, i);
+    let mut file = File::open(filename).unwrap();
+    let mut file_content = Vec::new();
+    match file.read_to_end(&mut file_content) {
+        Ok(_) => {
+            let lossy_content = String::from_utf8_lossy(&file_content);
+            for (i, line) in lossy_content.lines().enumerate() {
+                editor_insert_row(cfg, line.to_string(), i);
+            }
+            cfg.numrows = cfg.rows.len();
+            cfg.dirty = false;
+        }
+        Err(e) => {
+            eprint!("{:?}", e);
+            exit_gracefully(cfg);
+        }
     }
-
-    cfg.numrows = cfg.rows.len();
-    cfg.dirty = false;
 }
 
 fn editor_rows_to_string(cfg: &EditorConfig) -> String {
