@@ -207,7 +207,9 @@ fn editor_update_syntax(row: &mut Row) {
         } else {
             Highlight::Normal
         };
-        if c.is_ascii_digit() && (prev_sep || prev_hl == Highlight::Number) {
+        if c.is_ascii_digit() && (prev_sep || prev_hl == Highlight::Number)
+            || (c == '.' && prev_hl == Highlight::Number)
+        {
             row.hl[i] = Highlight::Number;
             prev_sep = false;
             continue;
