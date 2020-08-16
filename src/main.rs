@@ -34,6 +34,8 @@ enum Direction {
 enum Highlight {
     Normal,
     Comment,
+    Keyword1,
+    Keyword2,
     String,
     Number,
     Match,
@@ -43,6 +45,8 @@ impl From<Highlight> for i32 {
     fn from(hl: Highlight) -> i32 {
         match hl {
             Highlight::Comment => 36,
+            Highlight::Keyword1 => 33,
+            Highlight::Keyword2 => 32,
             Highlight::String => 35,
             Highlight::Number => 31,
             Highlight::Match => 34,
@@ -92,11 +96,40 @@ impl EditorConfig {
         screenrows -= 2;
 
         let c_filematch = vec!["c".to_string(), "h".to_string(), "cpp".to_string()];
+        let c_keywords: Vec<String> = vec![
+            "switch",
+            "if",
+            "while",
+            "for",
+            "break",
+            "continue",
+            "return",
+            "else",
+            "struct",
+            "union",
+            "typedef",
+            "static",
+            "enum",
+            "class",
+            "case",
+            "int|",
+            "long|",
+            "double|",
+            "float|",
+            "char|",
+            "unsigned|",
+            "signed|",
+            "void|",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
 
         let mut hldb = Vec::new();
         hldb.push(EditorSyntax::new(
             "c",
             HashSet::from_iter(c_filematch),
+            c_keywords,
             "//".to_string(),
             HighlightFlag::Number as u8 | HighlightFlag::String as u8,
         ));
@@ -151,6 +184,7 @@ enum EditorKey {
 struct EditorSyntax {
     filetype: String,
     filematch: HashSet<String>,
+    keywords: Vec<String>,
     singleline_comment_start: String,
     flags: u8,
 }
@@ -159,12 +193,14 @@ impl EditorSyntax {
     fn new(
         filetype: &str,
         filematch: HashSet<String>,
+        keywords: Vec<String>,
         singleline_comment_start: String,
         flags: u8,
     ) -> Self {
         EditorSyntax {
             filetype: filetype.to_string(),
             filematch,
+            keywords,
             singleline_comment_start,
             flags,
         }
@@ -258,6 +294,7 @@ fn editor_update_syntax(syntax: Option<&EditorSyntax>, row: &mut Row) {
         let flags = syntax.flags;
         let scs = &syntax.singleline_comment_start;
         let scs_len = scs.len();
+        let keywords = &syntax.keywords;
 
         for (i, c) in row.render.chars().enumerate() {
             let prev_hl = if i > 0 {
@@ -304,6 +341,37 @@ fn editor_update_syntax(syntax: Option<&EditorSyntax>, row: &mut Row) {
                     continue;
                 }
             }
+
+            if prev_sep {
+                for keyword in keywords.iter() {
+                    let mut kw = keyword.as_str();
+                    let mut klen = keyword.len();
+                    let kw2 = keyword.get(klen - 1..);
+                    let mut is_kw2 = false;
+                    if let Some(kw2) = kw2 {
+                        if kw2 == "|" {
+                            klen -= 1;
+                            kw = keyword.get(..klen - 1).unwrap();
+                            is_kw2 = true;
+                        }
+                    }
+
+                    let slice = &row.render[i..];
+                    let bytes = slice.as_bytes();
+                    if slice.starts_with(kw) && is_seperator(bytes[klen] as char) {
+                        let slice = &mut row.hl[i..i + klen];
+                        for el in slice {
+                            *el = if is_kw2 {
+                                Highlight::Keyword2
+                            } else {
+                                Highlight::Keyword1
+                            };
+                        }
+                        break;
+                    }
+                }
+            }
+
             prev_sep = is_seperator(c);
         }
     }
