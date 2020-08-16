@@ -34,7 +34,7 @@ enum Highlight {
     Match,
 }
 
-impl<'a> From<Highlight> for i32 {
+impl From<Highlight> for i32 {
     fn from(hl: Highlight) -> i32 {
         match hl {
             Highlight::Number => 31,
@@ -65,35 +65,25 @@ struct EditorConfig {
     direction: Direction,
     saved_hl_line: isize,
     saved_hl: Option<Vec<Highlight>>,
+    hldb: Vec<EditorSyntax>,
+    editor_syntax: Option<EditorSyntax>,
 }
 
-/// EditorKey represents all Keys pressed
-#[derive(Eq, PartialEq)]
-enum EditorKey {
-    Char(char),
-    Ctrl(char),
-    ArrowLeft,
-    ArrowRight,
-    ArrowUp,
-    ArrowDown,
-    DeleteKey,
-    PageUp,
-    PageDown,
-    HomeKey,
-    EndKey,
-    EscapeSeq,
-    CarriageReturn,
-    Backspace,
-}
-
-impl Default for EditorConfig {
-    fn default() -> Self {
+impl EditorConfig {
+    fn new() -> Self {
         let fd = io::stdin().as_raw_fd();
         let mut term: Termios = Termios::from_fd(fd).unwrap();
         tcgetattr(fd, &mut term).unwrap();
 
         let (mut screenrows, screencols) = get_window_size().unwrap();
         screenrows -= 2;
+
+        let mut hldb = Vec::new();
+        hldb.push(EditorSyntax::new(
+            "c",
+            vec![".c".to_string(), ".h".to_string(), ".cpp".to_string()],
+            HighlightFlags::Numbers,
+        ));
 
         EditorConfig {
             cx: 0,
@@ -116,8 +106,50 @@ impl Default for EditorConfig {
             direction: Direction::Forward,
             saved_hl_line: -1,
             saved_hl: None,
+            hldb,
+            editor_syntax: None,
         }
     }
+}
+
+/// EditorKey represents all Keys pressed
+#[derive(Eq, PartialEq)]
+enum EditorKey {
+    Char(char),
+    Ctrl(char),
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+    ArrowDown,
+    DeleteKey,
+    PageUp,
+    PageDown,
+    HomeKey,
+    EndKey,
+    EscapeSeq,
+    CarriageReturn,
+    Backspace,
+}
+
+struct EditorSyntax {
+    filetype: String,
+    filematch: Vec<String>,
+    flags: HighlightFlags,
+}
+
+impl EditorSyntax {
+    fn new(filetype: &str, filematch: Vec<String>, flags: HighlightFlags) -> Self {
+        EditorSyntax {
+            filetype: filetype.to_string(),
+            filematch,
+            flags,
+        }
+    }
+}
+
+#[derive(Eq, PartialEq, Clone, Copy)]
+enum HighlightFlags {
+    Numbers = 1,
 }
 
 // *** Terminal ***
@@ -197,9 +229,14 @@ fn disable_raw_mode(raw: &Termios) -> Result<(), io::Error> {
 
 // *** Syntax Highlighting ***
 
-fn editor_update_syntax(row: &mut Row) {
+fn editor_update_syntax(syntax: Option<&EditorSyntax>, row: &mut Row) {
     let n = row.render.len();
     row.hl = vec![Highlight::Normal; n];
+
+    if syntax.is_none() {
+        return;
+    }
+
     let mut prev_sep = true;
     for (i, c) in row.render.chars().enumerate() {
         let prev_hl = if i > 0 {
@@ -207,12 +244,15 @@ fn editor_update_syntax(row: &mut Row) {
         } else {
             Highlight::Normal
         };
-        if c.is_ascii_digit() && (prev_sep || prev_hl == Highlight::Number)
-            || (c == '.' && prev_hl == Highlight::Number)
-        {
-            row.hl[i] = Highlight::Number;
-            prev_sep = false;
-            continue;
+
+        if syntax.unwrap().flags == HighlightFlags::Numbers {
+            if c.is_ascii_digit() && (prev_sep || prev_hl == Highlight::Number)
+                || (c == '.' && prev_hl == Highlight::Number)
+            {
+                row.hl[i] = Highlight::Number;
+                prev_sep = false;
+                continue;
+            }
         }
         prev_sep = is_seperator(c);
     }
@@ -262,13 +302,13 @@ fn editor_insert_row(cfg: &mut EditorConfig, chars: String, at: usize) {
     }
     let mut row = Row::default();
     row.chars = chars;
-    editor_update_row(&mut row);
+    editor_update_row(cfg.editor_syntax.as_ref(), &mut row);
     cfg.rows.insert(at, row);
     cfg.numrows = cfg.rows.len();
     cfg.dirty = true;
 }
 
-fn editor_update_row(row: &mut Row) {
+fn editor_update_row(syntax: Option<&EditorSyntax>, row: &mut Row) {
     let mut idx = 0;
     row.render.clear();
 
@@ -286,7 +326,7 @@ fn editor_update_row(row: &mut Row) {
         }
     }
 
-    editor_update_syntax(row);
+    editor_update_syntax(syntax, row);
 }
 
 fn editor_free_row(row: &mut Row) {
@@ -304,25 +344,25 @@ fn editor_del_row(cfg: &mut EditorConfig, at: usize) {
     cfg.dirty = true;
 }
 
-fn editor_row_insert_char(row: &mut Row, mut at: usize, c: char) {
+fn editor_row_insert_char(syntax: Option<&EditorSyntax>, row: &mut Row, mut at: usize, c: char) {
     if at > row.chars.len() {
         at = row.chars.len();
     }
     row.chars.insert(at, c);
-    editor_update_row(row);
+    editor_update_row(syntax, row);
 }
 
-fn editor_row_del_char(row: &mut Row, at: usize) {
+fn editor_row_del_char(syntax: Option<&EditorSyntax>, row: &mut Row, at: usize) {
     if at >= row.chars.len() {
         return;
     }
     row.chars.remove(at);
-    editor_update_row(row);
+    editor_update_row(syntax, row);
 }
 
-fn editor_row_append_str(row: &mut Row, s: &str) {
+fn editor_row_append_str(syntax: Option<&EditorSyntax>, row: &mut Row, s: &str) {
     row.chars.push_str(s);
-    editor_update_row(row);
+    editor_update_row(syntax, row);
 }
 
 // *** Editor operations ***
@@ -331,7 +371,7 @@ fn editor_insert_char(cfg: &mut EditorConfig, c: char) {
     if cfg.cy == cfg.numrows {
         editor_insert_row(cfg, String::new(), 0);
     }
-    editor_row_insert_char(&mut cfg.rows[cfg.cy], cfg.cx, c);
+    editor_row_insert_char(cfg.editor_syntax.as_ref(), &mut cfg.rows[cfg.cy], cfg.cx, c);
     cfg.cx += 1;
     cfg.dirty = true;
 }
@@ -345,7 +385,7 @@ fn editor_insert_new_line(cfg: &mut EditorConfig) {
 
         let mut row = &mut cfg.rows[cfg.cy];
         row.chars = String::from(&chars[..cfg.cx]);
-        editor_update_row(&mut row);
+        editor_update_row(cfg.editor_syntax.as_ref(), &mut row);
     }
     cfg.cy += 1;
     cfg.cx = 0;
@@ -363,12 +403,12 @@ fn editor_del_char(cfg: &mut EditorConfig) {
         let (left, right) = cfg.rows.split_at_mut(cfg.cy);
         let row = &mut right[0];
         if cfg.cx > 0 {
-            editor_row_del_char(row, cfg.cx - 1);
+            editor_row_del_char(cfg.editor_syntax.as_ref(), row, cfg.cx - 1);
             cfg.cx -= 1;
         } else {
             let prev_row = &mut left[left.len() - 1];
             cfg.cx = prev_row.chars.len();
-            editor_row_append_str(prev_row, row.chars.as_str());
+            editor_row_append_str(cfg.editor_syntax.as_ref(), prev_row, row.chars.as_str());
             editor_del_row(cfg, cfg.cy);
             cfg.cy -= 1;
         }
@@ -582,7 +622,15 @@ fn editor_draw_status_bar(cfg: &EditorConfig, abuf: &mut String) {
         status.push_str("(modified)");
     }
 
-    let rstatus = format!("{}/{}", cfg.cy + 1, cfg.numrows);
+    let rstatus = format!(
+        "{} | {}/{}",
+        cfg.editor_syntax
+            .as_ref()
+            .map(|syntax| syntax.filetype.to_string())
+            .unwrap_or("no ft".to_string()),
+        cfg.cy + 1,
+        cfg.numrows
+    );
     let rlen = rstatus.len();
 
     let mut len = status.len();
@@ -949,7 +997,7 @@ fn editor_save(cfg: &mut EditorConfig) {
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
-    let mut cfg = EditorConfig::default();
+    let mut cfg = EditorConfig::new();
     enable_raw_mode(&cfg).unwrap();
 
     if args.len() > 1 {
