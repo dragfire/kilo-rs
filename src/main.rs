@@ -200,11 +200,25 @@ fn disable_raw_mode(raw: &Termios) -> Result<(), io::Error> {
 fn editor_update_syntax(row: &mut Row) {
     let n = row.render.len();
     row.hl = vec![Highlight::Normal; n];
+    let mut prev_sep = true;
     for (i, c) in row.render.chars().enumerate() {
-        if c.is_ascii_digit() {
+        let prev_hl = if i > 0 {
+            row.hl[i - 1]
+        } else {
+            Highlight::Normal
+        };
+        if c.is_ascii_digit() && (prev_sep || prev_hl == Highlight::Number) {
             row.hl[i] = Highlight::Number;
+            prev_sep = false;
+            continue;
         }
+        prev_sep = is_seperator(c);
     }
+}
+
+/// Check if a character is a seperator character
+fn is_seperator(c: char) -> bool {
+    c.is_ascii_whitespace() || ",.()+-/*=~%<>[];".contains(c)
 }
 
 // *** Row Operations ***
