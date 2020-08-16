@@ -33,6 +33,8 @@ enum Direction {
 #[derive(Eq, PartialEq, Clone, Copy)]
 enum Highlight {
     Normal,
+    Comment,
+    String,
     Number,
     Match,
 }
@@ -40,11 +42,19 @@ enum Highlight {
 impl From<Highlight> for i32 {
     fn from(hl: Highlight) -> i32 {
         match hl {
+            Highlight::Comment => 36,
+            Highlight::String => 35,
             Highlight::Number => 31,
             Highlight::Match => 34,
             _ => 37,
         }
     }
+}
+
+/// Set bit flags
+enum HighlightFlag {
+    Number = 1 << 0, // 01
+    String = 1 << 1, // 10
 }
 
 struct EditorConfig {
@@ -87,7 +97,8 @@ impl EditorConfig {
         hldb.push(EditorSyntax::new(
             "c",
             HashSet::from_iter(c_filematch),
-            HighlightFlags::Numbers,
+            "//".to_string(),
+            HighlightFlag::Number as u8 | HighlightFlag::String as u8,
         ));
 
         EditorConfig {
@@ -140,22 +151,24 @@ enum EditorKey {
 struct EditorSyntax {
     filetype: String,
     filematch: HashSet<String>,
-    flags: HighlightFlags,
+    singleline_comment_start: String,
+    flags: u8,
 }
 
 impl EditorSyntax {
-    fn new(filetype: &str, filematch: HashSet<String>, flags: HighlightFlags) -> Self {
+    fn new(
+        filetype: &str,
+        filematch: HashSet<String>,
+        singleline_comment_start: String,
+        flags: u8,
+    ) -> Self {
         EditorSyntax {
             filetype: filetype.to_string(),
             filematch,
+            singleline_comment_start,
             flags,
         }
     }
-}
-
-#[derive(Eq, PartialEq, Clone, Copy)]
-enum HighlightFlags {
-    Numbers = 1,
 }
 
 // *** Terminal ***
@@ -239,28 +252,60 @@ fn editor_update_syntax(syntax: Option<&EditorSyntax>, row: &mut Row) {
     let n = row.render.len();
     row.hl = vec![Highlight::Normal; n];
 
-    if syntax.is_none() {
-        return;
-    }
+    if let Some(syntax) = syntax {
+        let mut prev_sep = true;
+        let mut in_string = false;
+        let flags = syntax.flags;
+        let scs = &syntax.singleline_comment_start;
+        let scs_len = scs.len();
 
-    let mut prev_sep = true;
-    for (i, c) in row.render.chars().enumerate() {
-        let prev_hl = if i > 0 {
-            row.hl[i - 1]
-        } else {
-            Highlight::Normal
-        };
+        for (i, c) in row.render.chars().enumerate() {
+            let prev_hl = if i > 0 {
+                row.hl[i - 1]
+            } else {
+                Highlight::Normal
+            };
 
-        if syntax.unwrap().flags == HighlightFlags::Numbers {
-            if c.is_ascii_digit() && (prev_sep || prev_hl == Highlight::Number)
-                || (c == '.' && prev_hl == Highlight::Number)
-            {
-                row.hl[i] = Highlight::Number;
-                prev_sep = false;
-                continue;
+            if scs_len > 0 && !in_string {
+                let slice = &row.render[i..];
+                if slice.starts_with(scs) {
+                    let slice = &mut row.hl[i..];
+                    for el in slice {
+                        *el = Highlight::Comment;
+                    }
+                    break;
+                }
             }
+
+            if syntax.flags & HighlightFlag::String as u8 == HighlightFlag::String as u8 {
+                if in_string {
+                    row.hl[i] = Highlight::String;
+                    if c == '\\' && i + 1 < n {
+                        row.hl[i + 1] = Highlight::String;
+                        continue;
+                    }
+                    prev_sep = true;
+                    continue;
+                } else {
+                    if c == '"' || c == '\'' {
+                        in_string = true;
+                        row.hl[i] = Highlight::String;
+                        continue;
+                    }
+                }
+            }
+
+            if flags & HighlightFlag::Number as u8 == HighlightFlag::Number as u8 {
+                if c.is_ascii_digit() && (prev_sep || prev_hl == Highlight::Number)
+                    || (c == '.' && prev_hl == Highlight::Number)
+                {
+                    row.hl[i] = Highlight::Number;
+                    prev_sep = false;
+                    continue;
+                }
+            }
+            prev_sep = is_seperator(c);
         }
-        prev_sep = is_seperator(c);
     }
 }
 
@@ -284,6 +329,9 @@ fn editor_select_syntax_highlight(cfg: &mut EditorConfig) {
     for syntax in cfg.hldb.iter() {
         if syntax.filematch.contains(ext) {
             cfg.editor_syntax = Some(syntax.clone());
+            for row in cfg.rows.iter_mut() {
+                editor_update_syntax(cfg.editor_syntax.as_ref(), row);
+            }
             return;
         }
     }
