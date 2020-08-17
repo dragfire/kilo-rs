@@ -523,7 +523,7 @@ fn editor_insert_row(cfg: &mut EditorConfig, chars: String, at: usize) {
         return;
     }
 
-    for j in at + 1..cfg.numrows + 1 {
+    for j in at + 1..cfg.numrows {
         cfg.rows[j].idx += 1;
     }
 
@@ -570,10 +570,11 @@ fn editor_del_row(cfg: &mut EditorConfig, at: usize) {
         return;
     }
     editor_free_row(&mut cfg.rows[cfg.cy]);
+    cfg.rows.remove(at);
+    cfg.numrows -= 1;
     for j in at..cfg.numrows - 1 {
         cfg.rows[j].idx -= 1;
     }
-    cfg.rows.remove(at);
     cfg.dirty = true;
 }
 
@@ -589,7 +590,7 @@ fn editor_row_insert_char(
         at = row.chars.len();
     }
     row.chars.insert(at, c);
-    editor_update_row(syntax, rows, at);
+    editor_update_row(syntax, rows, cy);
 }
 
 fn editor_row_del_char(syntax: Option<&EditorSyntax>, rows: &mut [Row], at: usize, cy: usize) {
@@ -629,11 +630,11 @@ fn editor_insert_new_line(cfg: &mut EditorConfig) {
     if cfg.cx == 0 {
         editor_insert_row(cfg, String::new(), 0);
     } else {
-        let chars = cfg.rows[cfg.cy].chars.to_owned();
-        editor_insert_row(cfg, String::from(&chars[cfg.cx..]), cfg.cy + 1);
+        let chars = cfg.rows[cfg.cy].chars.to_string();
+        editor_insert_row(cfg, String::from(&chars[cfg.cx - 1..]), cfg.cy + 1);
 
         let row = &mut cfg.rows[cfg.cy];
-        row.chars = String::from(&chars[..cfg.cx]);
+        row.chars = String::from(&chars[..cfg.cx - 1]);
         editor_update_row(cfg.editor_syntax.as_ref(), cfg.rows.as_mut_slice(), cfg.cy);
     }
     cfg.cy += 1;
@@ -648,28 +649,27 @@ fn editor_del_char(cfg: &mut EditorConfig) {
         return;
     }
 
-    if cfg.cy <= cfg.rows.len() {
-        if cfg.cx > 0 {
-            editor_row_del_char(
-                cfg.editor_syntax.as_ref(),
-                cfg.rows.as_mut_slice(),
-                cfg.cx - 1,
-                cfg.cy,
-            );
-            cfg.cx -= 1;
-        } else {
-            let chars = &cfg.rows[cfg.cy].chars.to_string();
-            editor_row_append_str(
-                cfg.editor_syntax.as_ref(),
-                cfg.rows.as_mut_slice(),
-                cfg.cy,
-                chars,
-            );
-            editor_del_row(cfg, cfg.cy);
-            cfg.cy -= 1;
-        }
-        cfg.dirty = true;
+    if cfg.cx > 0 {
+        editor_row_del_char(
+            cfg.editor_syntax.as_ref(),
+            cfg.rows.as_mut_slice(),
+            cfg.cx - 1,
+            cfg.cy,
+        );
+        cfg.cx -= 1;
+    } else {
+        let chars = &cfg.rows[cfg.cy].chars.to_string();
+        cfg.cx = cfg.rows[cfg.cy - 1].chars.len();
+        editor_row_append_str(
+            cfg.editor_syntax.as_ref(),
+            cfg.rows.as_mut_slice(),
+            cfg.cy - 1,
+            chars,
+        );
+        editor_del_row(cfg, cfg.cy);
+        cfg.cy -= 1;
     }
+    cfg.dirty = true;
 }
 
 // *** Find ***
@@ -1139,7 +1139,6 @@ fn editor_process_keypress(cfg: &mut EditorConfig) {
             editor_insert_char(cfg, c);
         }
         EditorKey::DeleteKey | EditorKey::Backspace => {
-            editor_move_cursor(cfg, EditorKey::ArrowRight);
             editor_del_char(cfg);
         }
         _ => (),
