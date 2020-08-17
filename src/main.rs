@@ -1223,15 +1223,17 @@ fn editor_rows_to_string(cfg: &EditorConfig) -> String {
 }
 
 fn editor_save(cfg: &mut EditorConfig) {
-    cfg.filename = editor_prompt(
-        cfg,
-        |buf| format!("Save as: {} (ESC to Cancel)", buf),
-        None::<fn(&mut EditorConfig, &str, EditorKey)>,
-    );
     if cfg.filename.is_none() {
-        editor_set_status_msg(cfg, "Save aborted!".to_string());
+        cfg.filename = editor_prompt(
+            cfg,
+            |buf| format!("Save as: {} (ESC to Cancel)", buf),
+            None::<fn(&mut EditorConfig, &str, EditorKey)>,
+        );
+        if cfg.filename.is_none() {
+            editor_set_status_msg(cfg, "Save aborted!".to_string());
+        }
+        editor_select_syntax_highlight(cfg);
     }
-    editor_select_syntax_highlight(cfg);
 
     if let Some(filename) = cfg.filename.as_ref() {
         let buf = editor_rows_to_string(cfg);
