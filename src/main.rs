@@ -307,7 +307,7 @@ fn editor_update_syntax(edit_syntax: Option<&EditorSyntax>, rows: &mut [Row], cy
     if let Some(syntax) = edit_syntax {
         let mut in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(false);
         apply_syntax(syntax, in_comment, row);
-        let changed = row.hl_open_comment != in_comment;
+        let mut changed = row.hl_open_comment != in_comment;
         row.hl_open_comment = in_comment;
         while changed && row.idx + 1 < numrows {
             let mut brows = rows.borrow_mut();
@@ -316,6 +316,8 @@ fn editor_update_syntax(edit_syntax: Option<&EditorSyntax>, rows: &mut [Row], cy
             let prev_row = left.last();
             in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(false);
             apply_syntax(syntax, in_comment, row);
+            changed = row.hl_open_comment != in_comment;
+            row.hl_open_comment = in_comment;
         }
     }
 }
