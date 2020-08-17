@@ -314,7 +314,7 @@ fn editor_update_syntax(edit_syntax: Option<&EditorSyntax>, rows: &mut [Row], cy
             let (left, right) = brows.split_at_mut(row.idx + 1);
             let row = &mut right[0];
             let prev_row = left.last();
-            in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(false);
+            in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(true);
             apply_syntax(syntax, in_comment, row);
             changed = row.hl_open_comment != in_comment;
             row.hl_open_comment = in_comment;
@@ -392,6 +392,9 @@ fn apply_syntax(syntax: &EditorSyntax, mut in_comment: bool, row: &mut Row) {
                     row.hl[i + 1] = Highlight::String;
                     i += 2;
                     continue;
+                }
+                if c == '"' || c == '\'' {
+                    in_string = false;
                 }
                 i += 1;
                 prev_sep = true;
