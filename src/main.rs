@@ -573,7 +573,7 @@ fn editor_del_row(cfg: &mut EditorConfig, at: usize) {
     cfg.rows.remove(at);
     cfg.numrows -= 1;
     for j in at..cfg.numrows - 1 {
-        cfg.rows[j].idx -= 1;
+        cfg.rows[j].idx = cfg.rows[j].idx.saturating_sub(1);
     }
     cfg.dirty = true;
 }
