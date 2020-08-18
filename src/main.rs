@@ -302,10 +302,10 @@ fn editor_update_syntax(edit_syntax: Option<&EditorSyntax>, rows: &mut [Row], cy
     let (left, right) = brows.split_at_mut(cy);
     let row = &mut right[0];
     let prev_row = left.last();
-    row.hl = vec![Highlight::Normal; row.chars.len()];
 
     if let Some(syntax) = edit_syntax {
         let mut in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(false);
+        row.hl = vec![Highlight::Normal; row.render.len()];
         apply_syntax(syntax, in_comment, row);
         let mut changed = row.hl_open_comment != in_comment;
         row.hl_open_comment = in_comment;
@@ -314,7 +314,8 @@ fn editor_update_syntax(edit_syntax: Option<&EditorSyntax>, rows: &mut [Row], cy
             let (left, right) = brows.split_at_mut(row.idx + 1);
             let row = &mut right[0];
             let prev_row = left.last();
-            in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(true);
+            in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(false);
+            row.hl = vec![Highlight::Normal; row.render.len()];
             apply_syntax(syntax, in_comment, row);
             changed = row.hl_open_comment != in_comment;
             row.hl_open_comment = in_comment;
@@ -424,19 +425,19 @@ fn apply_syntax(syntax: &EditorSyntax, mut in_comment: bool, row: &mut Row) {
             for keyword in keywords.iter() {
                 let mut kw = keyword.as_str();
                 let mut klen = keyword.len();
-                let kw2 = keyword.get(klen - 1..);
+                let kw_bytes = keyword.as_bytes();
                 let mut is_kw2 = false;
-                if let Some(kw2) = kw2 {
-                    if kw2 == "|" {
-                        klen -= 1;
-                        kw = keyword.get(..klen - 1).unwrap();
-                        is_kw2 = true;
-                    }
+                if kw_bytes[klen - 1] as char == '|' {
+                    klen -= 1;
+                    kw = &keyword[..klen];
+                    is_kw2 = true;
                 }
 
                 let slice = &row.render[i..];
                 let bytes = slice.as_bytes();
-                if slice.starts_with(kw) && is_seperator(bytes[klen] as char) {
+                assert_eq!(kw.len(), klen);
+                if slice.starts_with(kw) && slice.len() > klen && is_seperator(bytes[klen] as char)
+                {
                     let slice = &mut row.hl[i..i + klen];
                     for el in slice {
                         *el = if is_kw2 {
