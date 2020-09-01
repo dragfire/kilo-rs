@@ -305,7 +305,6 @@ fn editor_update_syntax(edit_syntax: Option<&EditorSyntax>, rows: &mut [Row], cy
 
     if let Some(syntax) = edit_syntax {
         let mut in_comment = row.idx > 0 && prev_row.map(|r| r.hl_open_comment).unwrap_or(false);
-        row.hl = vec![Highlight::Normal; row.render.len()];
         apply_syntax(syntax, in_comment, row);
         let mut changed = row.hl_open_comment != in_comment;
         row.hl_open_comment = in_comment;
@@ -530,6 +529,7 @@ fn editor_insert_row(cfg: &mut EditorConfig, chars: String, at: usize) {
 
     let mut row = Row::default();
     row.idx = at;
+    row.hl = vec![Highlight::Normal; row.render.len()];
     row.chars = chars;
     row.hl_open_comment = false;
     cfg.rows.insert(at, row);
@@ -833,6 +833,7 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
                 if i == len {
                     break;
                 }
+                assert_eq!(slice.len(), hl.len());
 
                 if hl[i] == Highlight::Normal {
                     if curr_color != -1 {

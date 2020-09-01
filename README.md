@@ -8,7 +8,7 @@ A terminal text editor using Rust
 - [x] Editor text viewer
 - [x] Editor key movements
 - [x] Horizontal and Vertical scrolling
-- [ ] Status Bar
-- [ ] Edit text
-- [ ] Search 
-- [ ] Syntax highlighting
+- [x] Status Bar
+- [x] Edit text
+- [x] Search 
+- [x] Syntax highlighting
