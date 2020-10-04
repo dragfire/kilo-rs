@@ -833,18 +833,19 @@ fn editor_draw_rows(cfg: &EditorConfig, abuf: &mut String) {
                 if i == len {
                     break;
                 }
-                assert_eq!(slice.len(), hl.len());
 
-                if hl[i] == Highlight::Normal {
-                    if curr_color != -1 {
-                        abuf.push_str("\x1b[39m");
-                        curr_color = -1;
-                    }
-                } else {
-                    let color: i32 = hl[i].into();
-                    if color != curr_color {
-                        curr_color = color;
-                        abuf.push_str(&format!("\x1b[{}m", color));
+                if !hl.is_empty() {
+                    if hl[i] == Highlight::Normal {
+                        if curr_color != -1 {
+                            abuf.push_str("\x1b[39m");
+                            curr_color = -1;
+                        }
+                    } else {
+                        let color: i32 = hl[i].into();
+                        if color != curr_color {
+                            curr_color = color;
+                            abuf.push_str(&format!("\x1b[{}m", color));
+                        }
                     }
                 }
                 abuf.push(c);
